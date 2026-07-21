@@ -5,6 +5,7 @@ and analytics: reopen counts, last close/reopen timestamps, and the
 e.g. there is no SLA/priority field — the aging check below is an explicit
 local heuristic)."""
 
+from collections import defaultdict
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
@@ -74,7 +75,7 @@ class ClosedTodayEntry:
         self.total_close_count = total_close_count
 
 
-async def _actually_closed_entries(session: AsyncSession, settings: Settings) -> list[ClosedTodayEntry]:
+async def actually_closed_entries(session: AsyncSession, settings: Settings) -> list[ClosedTodayEntry]:
     """Tickets genuinely sitting in CLOSED/REJECTED *right now* - not a raw
     "a close event happened at some point" count. A ticket that closed and
     then reopened again (same day or since) is correctly excluded: it isn't
@@ -103,7 +104,7 @@ async def _actually_closed_entries(session: AsyncSession, settings: Settings) ->
 
 async def compute_actually_closed_today_ids(session: AsyncSession, settings: Settings) -> set[str]:
     today = to_reporting_date(utcnow(), settings.reporting_timezone)
-    entries = await _actually_closed_entries(session, settings)
+    entries = await actually_closed_entries(session, settings)
     return {e.ticket_id for e in entries if e.last_close_date == today}
 
 
@@ -111,7 +112,7 @@ async def compute_today_snapshot(session: AsyncSession, settings: Settings) -> d
     now = utcnow()
     today = to_reporting_date(now, settings.reporting_timezone)
 
-    entries = await _actually_closed_entries(session, settings)
+    entries = await actually_closed_entries(session, settings)
     closed_today_entries = [e for e in entries if e.last_close_date == today]
     fresh_closed_today = sum(1 for e in closed_today_entries if e.total_close_count == 1)
     reclosed_today = len(closed_today_entries) - fresh_closed_today
@@ -129,6 +130,94 @@ async def compute_today_snapshot(session: AsyncSession, settings: Settings) -> d
         "reopened_today": reopened_today,
         "customer_reopened_today": customer_reopened_today,
     }
+
+
+async def _first_self_assignments(session: AsyncSession, ticket_ids: list[str] | None = None) -> dict[str, datetime]:
+    if ticket_ids is not None and not ticket_ids:
+        return {}
+    stmt = select(AssignmentEvent).where(AssignmentEvent.is_gain_for_tracked_agent.is_(True))
+    if ticket_ids is not None:
+        stmt = stmt.where(AssignmentEvent.ticket_id.in_(ticket_ids))
+    rows = (await session.execute(stmt.order_by(AssignmentEvent.ticket_id, AssignmentEvent.seq))).scalars().all()
+    first_assign_at: dict[str, datetime] = {}
+    for r in rows:
+        if r.ticket_id not in first_assign_at:
+            first_assign_at[r.ticket_id] = r.created_at
+    return first_assign_at
+
+
+async def compute_response_durations(session: AsyncSession, settings: Settings) -> list[dict]:
+    """One entry per ticket the tracked agent has ever taken ownership of and
+    has since replied on: minutes between the first self-assignment and the
+    first message the tracked agent sent afterwards, attributed to the day
+    the reply itself went out (not the day the ticket was assigned)."""
+    first_assign_at = await _first_self_assignments(session)
+    if not first_assign_at:
+        return []
+
+    msg_rows = (
+        await session.execute(
+            select(TicketEvent)
+            .where(
+                TicketEvent.ticket_id.in_(list(first_assign_at.keys())),
+                TicketEvent.type == "message",
+                TicketEvent.author_email == settings.tracked_agent_email,
+            )
+            .order_by(TicketEvent.ticket_id, TicketEvent.seq)
+        )
+    ).scalars().all()
+
+    out = []
+    seen: set[str] = set()
+    for r in msg_rows:
+        if r.ticket_id in seen:
+            continue
+        assign_at = first_assign_at.get(r.ticket_id)
+        if assign_at is None or r.created_at <= assign_at:
+            continue
+        seen.add(r.ticket_id)
+        minutes = (r.created_at - assign_at).total_seconds() / 60
+        out.append({"ticket_id": r.ticket_id, "date": to_reporting_date(r.created_at, settings.reporting_timezone), "minutes": minutes})
+    return out
+
+
+async def compute_final_close_durations(session: AsyncSession, settings: Settings) -> list[dict]:
+    """One entry per ticket currently sitting CLOSED/REJECTED: minutes from
+    ownership start to the close that stuck. If the ticket was ever reopened,
+    the clock resets at the most recent reopen (not the original assignment) -
+    this measures how long the final resolution leg actually took, not the
+    ticket's total lifetime including reopen dwell time outside the agent's
+    control."""
+    entries = await actually_closed_entries(session, settings)
+    if not entries:
+        return []
+    ticket_ids = [e.ticket_id for e in entries]
+
+    st_rows = (
+        await session.execute(
+            select(StatusTransition).where(StatusTransition.ticket_id.in_(ticket_ids)).order_by(StatusTransition.ticket_id, StatusTransition.seq)
+        )
+    ).scalars().all()
+    by_ticket: dict[str, list[StatusTransition]] = defaultdict(list)
+    for r in st_rows:
+        by_ticket[r.ticket_id].append(r)
+
+    first_assign_at = await _first_self_assignments(session, ticket_ids)
+
+    out = []
+    for e in entries:
+        transitions = by_ticket.get(e.ticket_id, [])
+        close_rows = [t for t in transitions if t.is_close]
+        if not close_rows:
+            continue
+        final_close = close_rows[-1]
+        reopen_rows_before = [t for t in transitions if t.is_reopen and t.seq < final_close.seq]
+        start_at = reopen_rows_before[-1].created_at if reopen_rows_before else first_assign_at.get(e.ticket_id)
+        if start_at is None or final_close.created_at < start_at:
+            continue
+        minutes = (final_close.created_at - start_at).total_seconds() / 60
+        out.append({"ticket_id": e.ticket_id, "date": final_close.event_date, "minutes": minutes})
+    return out
 
 
 async def _latest_message_directions(session: AsyncSession, ticket_ids: list[str]) -> dict[str, str | None]:

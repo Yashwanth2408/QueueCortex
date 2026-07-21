@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     port: int = 8000
 
     tracked_agent_email: str = "yashwanth.balaji@emergent.sh"
-    poll_interval_minutes: int = 20
+    poll_interval_minutes: int = 10
     reporting_timezone: str = "Asia/Kolkata"
 
     trinity_ticket_url_template: str = "https://trinity-base.internal.emergent.host/tickets/{id}"

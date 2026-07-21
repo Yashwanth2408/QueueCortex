@@ -9,6 +9,7 @@ import { useDarkMode } from '@/context/DarkModeContext'
 import { useSyncRun, useSyncStatus, useTriggerSync } from '@/hooks/useSync'
 import { relativeTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { APP_VERSION } from '@/lib/version'
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard' },
@@ -74,6 +75,7 @@ export function TopBar() {
         <div className="flex items-center gap-2">
           <div className="flex size-6 items-center justify-center rounded-lg bg-foreground text-[13px] font-bold text-background">Q</div>
           <span className="text-[15px] font-semibold tracking-tight">QueueCortex</span>
+          <span className="font-tabular text-[11px] font-medium text-muted-foreground">v{APP_VERSION}</span>
         </div>
         <SegmentedNav />
         <div className="ml-auto flex items-center gap-3">

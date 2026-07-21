@@ -152,7 +152,7 @@ export interface AnalyticsSummaryBucket {
   reclose_count: number
   reopened_count: number
   customer_reopened_count: number
-  avg_time_to_first_close_minutes: number | null
+  avg_time_to_respond_minutes: number | null
   avg_time_to_final_close_minutes: number | null
 }
 

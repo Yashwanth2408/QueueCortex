@@ -220,7 +220,7 @@ class AnalyticsSummaryBucket(BaseModel):
     reclose_count: int
     reopened_count: int
     customer_reopened_count: int
-    avg_time_to_first_close_minutes: float | None
+    avg_time_to_respond_minutes: float | None
     avg_time_to_final_close_minutes: float | None
 
 

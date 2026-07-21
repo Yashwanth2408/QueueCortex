@@ -71,16 +71,16 @@ export function Analytics() {
     const closed = summary.reduce((s, b) => s + b.closed_count, 0)
     const reopened = summary.reduce((s, b) => s + b.reopened_count, 0)
     const custReopened = summary.reduce((s, b) => s + b.customer_reopened_count, 0)
-    const firstCloseSamples = summary.filter((b) => b.avg_time_to_first_close_minutes != null)
+    const respondSamples = summary.filter((b) => b.avg_time_to_respond_minutes != null)
     const finalCloseSamples = summary.filter((b) => b.avg_time_to_final_close_minutes != null)
-    const avgFirst = firstCloseSamples.length
-      ? firstCloseSamples.reduce((s, b) => s + (b.avg_time_to_first_close_minutes ?? 0), 0) / firstCloseSamples.length
+    const avgRespond = respondSamples.length
+      ? respondSamples.reduce((s, b) => s + (b.avg_time_to_respond_minutes ?? 0), 0) / respondSamples.length
       : null
     const avgFinal = finalCloseSamples.length
       ? finalCloseSamples.reduce((s, b) => s + (b.avg_time_to_final_close_minutes ?? 0), 0) / finalCloseSamples.length
       : null
     const reopenRate = closed > 0 ? (reopened / closed) * 100 : 0
-    return { closed, reopened, custReopened, avgFirst, avgFinal, reopenRate }
+    return { closed, reopened, custReopened, avgRespond, avgFinal, reopenRate }
   }, [summary])
 
   const typeBreakdown = useMemo(() => {
@@ -115,7 +115,7 @@ export function Analytics() {
         <KpiCard label="Closed" value={String(totals?.closed ?? 0)} loading={isLoading} />
         <KpiCard label="Reopened" value={String(totals?.reopened ?? 0)} sub={`${totals?.custReopened ?? 0} by customer`} loading={isLoading} />
         <KpiCard label="Reopen rate" value={`${(totals?.reopenRate ?? 0).toFixed(0)}%`} loading={isLoading} />
-        <KpiCard label="Avg. time to first close" value={formatMinutes(totals?.avgFirst)} loading={isLoading} />
+        <KpiCard label="Avg. time to respond" value={formatMinutes(totals?.avgRespond)} loading={isLoading} />
         <KpiCard label="Avg. time to final close" value={formatMinutes(totals?.avgFinal)} loading={isLoading} />
       </div>
 
