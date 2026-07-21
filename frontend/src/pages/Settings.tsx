@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check } from 'lucide-react'
+import { Check, Loader2, Upload } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { useToast } from '@/components/ui/toast'
 import { TagMappingTable } from '@/components/settings/TagMappingTable'
 import { useSettings, useUpdateSetting } from '@/hooks/useSettings'
+import { useRosterAgents, useUploadRoster } from '@/hooks/useRoster'
 import type { SettingValue } from '@/types'
 
 function useSavedFlash() {
@@ -25,6 +29,121 @@ function SavedBadge({ show }: { show: boolean }) {
     >
       <Check className="size-3.5" /> Saved
     </span>
+  )
+}
+
+function RosterCard() {
+  const { data: agents } = useRosterAgents()
+  const { data: settings } = useSettings()
+  const updateSetting = useUpdateSetting()
+  const uploadRoster = useUploadRoster()
+  const toast = useToast()
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const [unassignedBucketId, setUnassignedBucketId] = useState('')
+  const [assignedBucketId, setAssignedBucketId] = useState('')
+  const unassignedFlash = useSavedFlash()
+  const assignedFlash = useSavedFlash()
+
+  useEffect(() => {
+    if (!settings) return
+    const get = (k: string) => settings.find((s) => s.key === k)?.value
+    if (get('roster_bucket_unassigned_id')) setUnassignedBucketId(String(get('roster_bucket_unassigned_id')))
+    if (get('roster_bucket_assigned_id')) setAssignedBucketId(String(get('roster_bucket_assigned_id')))
+  }, [settings])
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    uploadRoster.mutate(file, {
+      onSuccess: (result) => {
+        toast({
+          title: 'Roster uploaded',
+          description: `${result.agents} agents, ${result.shift_rows} shift rows (${result.date_range[0] ?? '?'} – ${result.date_range[1] ?? '?'})`,
+          variant: 'success',
+        })
+      },
+      onError: (err) => {
+        toast({ title: 'Upload failed', description: err instanceof Error ? err.message : undefined, variant: 'error' })
+      },
+    })
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>L2 Roster</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Upload the shift-roster CSV to power Shift Watch — tickets held by an L2 agent who's currently off-shift. Tickets come only
+          from the two Trinity buckets below, so L1/Expo tickets never show up here.
+        </p>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="flex items-center gap-3">
+          <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileChange} />
+          <Button onClick={() => fileInputRef.current?.click()} disabled={uploadRoster.isPending}>
+            {uploadRoster.isPending ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+            Upload roster CSV
+          </Button>
+          {agents && agents.length > 0 && <span className="text-sm text-muted-foreground">{agents.length} agents loaded</span>}
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 border-t border-border pt-4 sm:grid-cols-2">
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="bucket-unassigned">"L2 - Unassigned Tickets" bucket ID</Label>
+              <SavedBadge show={unassignedFlash.saved} />
+            </div>
+            <Input
+              id="bucket-unassigned"
+              value={unassignedBucketId}
+              onChange={(e) => setUnassignedBucketId(e.target.value)}
+              onBlur={() => updateSetting.mutate({ key: 'roster_bucket_unassigned_id', value: unassignedBucketId }, { onSuccess: unassignedFlash.flash })}
+              className="font-mono text-xs"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="bucket-assigned">"L2 - Assigned (New Assigned + Re-opens)" bucket ID</Label>
+              <SavedBadge show={assignedFlash.saved} />
+            </div>
+            <Input
+              id="bucket-assigned"
+              value={assignedBucketId}
+              onChange={(e) => setAssignedBucketId(e.target.value)}
+              onBlur={() => updateSetting.mutate({ key: 'roster_bucket_assigned_id', value: assignedBucketId }, { onSuccess: assignedFlash.flash })}
+              className="font-mono text-xs"
+            />
+          </div>
+        </div>
+
+        {agents && agents.length > 0 && (
+          <div className="overflow-hidden rounded-lg border border-border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Agent</TableHead>
+                  <TableHead>Role</TableHead>
+                  <TableHead>Today</TableHead>
+                  <TableHead>Tomorrow</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {agents.map((a) => (
+                  <TableRow key={a.email}>
+                    <TableCell>{a.name}</TableCell>
+                    <TableCell className="text-muted-foreground">{a.role}</TableCell>
+                    <TableCell className="font-tabular">{a.today_shift_code ?? '—'}</TableCell>
+                    <TableCell className="font-tabular">{a.tomorrow_shift_code ?? '—'}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -158,6 +277,8 @@ export function Settings() {
           <TagMappingTable />
         </CardContent>
       </Card>
+
+      <RosterCard />
     </div>
   )
 }

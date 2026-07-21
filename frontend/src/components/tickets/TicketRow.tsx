@@ -3,6 +3,7 @@ import { TableCell, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { TicketHistoryPanel } from '@/components/tickets/TicketHistoryPanel'
+import { useTicketDetail } from '@/hooks/useTickets'
 import { absoluteTime, relativeTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { TicketListItem } from '@/types'
@@ -23,6 +24,7 @@ interface Props {
 
 export function TicketRow({ ticket, expanded, onToggle }: Props) {
   const customerName = [ticket.customer?.first_name, ticket.customer?.last_name].filter(Boolean).join(' ') || ticket.customer?.email
+  const { data: detail, isLoading: detailLoading } = useTicketDetail(expanded ? ticket.id : null)
 
   return (
     <>
@@ -96,7 +98,7 @@ export function TicketRow({ ticket, expanded, onToggle }: Props) {
         <TableRow className="hover:bg-transparent">
           <TableCell colSpan={9} className="p-0">
             <div className="mx-2 my-2 rounded-xl bg-muted/50 dark:bg-muted/30">
-              <TicketHistoryPanel ticketId={ticket.id} />
+              <TicketHistoryPanel ticketId={ticket.id} detail={detail} isLoading={detailLoading} />
             </div>
           </TableCell>
         </TableRow>

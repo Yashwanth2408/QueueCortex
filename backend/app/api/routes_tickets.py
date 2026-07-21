@@ -39,15 +39,21 @@ SORTABLE = {"last_event_at": Ticket.last_event_at, "num": Ticket.num, "created_a
 async def ticket_status_counts(
     session: AsyncSession = Depends(get_session), settings: Settings = Depends(get_app_settings)
 ):
-    rows = (await session.execute(select(Ticket.status, func.count()).group_by(Ticket.status))).all()
+    rows = (
+        await session.execute(select(Ticket.status, func.count()).where(Ticket.is_tracked.is_(True)).group_by(Ticket.status))
+    ).all()
     by_status = {status: count for status, count in rows}
 
     escalated = (
-        await session.execute(select(func.count()).select_from(Ticket).where(Ticket.level == "L3"))
+        await session.execute(
+            select(func.count()).select_from(Ticket).where(Ticket.level == "L3", Ticket.is_tracked.is_(True))
+        )
     ).scalar_one()
     unassigned = (
         await session.execute(
-            select(func.count()).select_from(Ticket).where(or_(Ticket.assigned_to_email.is_(None), Ticket.assigned_to_email == ""))
+            select(func.count())
+            .select_from(Ticket)
+            .where(or_(Ticket.assigned_to_email.is_(None), Ticket.assigned_to_email == ""), Ticket.is_tracked.is_(True))
         )
     ).scalar_one()
 
@@ -57,9 +63,10 @@ async def ticket_status_counts(
 
     taken_from_me = (
         await session.execute(
-            select(func.count(func.distinct(AssignmentEvent.ticket_id))).where(
-                AssignmentEvent.is_taken_from_tracked_agent.is_(True)
-            )
+            select(func.count(func.distinct(AssignmentEvent.ticket_id)))
+            .select_from(AssignmentEvent)
+            .join(Ticket, Ticket.id == AssignmentEvent.ticket_id)
+            .where(AssignmentEvent.is_taken_from_tracked_agent.is_(True), Ticket.is_tracked.is_(True))
         )
     ).scalar_one()
 
@@ -98,7 +105,7 @@ async def list_tickets(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_app_settings),
 ):
-    stmt = select(Ticket)
+    stmt = select(Ticket).where(Ticket.is_tracked.is_(True))
     if status:
         stmt = stmt.where(Ticket.status == status)
     if level:
@@ -188,15 +195,15 @@ async def list_tickets(
     return TicketListResponse(items=items, total=total, page=page, page_size=page_size)
 
 
-@router.get("/tickets/{ticket_id}", response_model=TicketDetailOut)
-async def get_ticket_detail(
-    ticket_id: str,
-    session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_app_settings),
-):
+async def load_ticket_detail(session: AsyncSession, ticket_id: str, note_author_email: str) -> TicketDetailOut | None:
+    """Shared by the personal `/tickets/{id}` endpoint and Shift Watch's
+    `/roster/tickets/{id}` endpoint - identical in every respect except
+    which agent's internal note counts as "the" last internal note
+    (`get_last_own_internal_note` is already parameterized by email, not
+    hardcoded to the tracked agent)."""
     ticket = await session.get(Ticket, ticket_id)
     if ticket is None:
-        raise HTTPException(404, "Ticket not tracked")
+        return None
 
     customer = None
     if ticket.customer_id:
@@ -243,7 +250,7 @@ async def get_ticket_detail(
         .scalars()
         .all()
     )
-    last_note = await get_last_own_internal_note(session, ticket_id, settings.tracked_agent_email)
+    last_note = await get_last_own_internal_note(session, ticket_id, note_author_email)
 
     return TicketDetailOut(
         id=ticket.id,
@@ -277,6 +284,18 @@ async def get_ticket_detail(
         last_trinity_internal_note=last_note,
         local_notes=local_notes,
     )
+
+
+@router.get("/tickets/{ticket_id}", response_model=TicketDetailOut)
+async def get_ticket_detail(
+    ticket_id: str,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_app_settings),
+):
+    detail = await load_ticket_detail(session, ticket_id, settings.tracked_agent_email)
+    if detail is None:
+        raise HTTPException(404, "Ticket not tracked")
+    return detail
 
 
 @router.post("/tickets/by-number", response_model=TicketDetailOut)
@@ -367,7 +386,9 @@ async def needs_attention_queue(
 
 @router.get("/export/tickets.csv")
 async def export_tickets_csv(session: AsyncSession = Depends(get_session)):
-    tickets = (await session.execute(select(Ticket).order_by(Ticket.num))).scalars().all()
+    tickets = (
+        await session.execute(select(Ticket).where(Ticket.is_tracked.is_(True)).order_by(Ticket.num))
+    ).scalars().all()
     flags = await compute_ticket_flags(session, [t.id for t in tickets])
 
     buffer = io.StringIO()

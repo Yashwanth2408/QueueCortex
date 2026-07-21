@@ -21,7 +21,16 @@ DEFAULT_KEYS = (
     "tracked_agent_email",
     "reporting_timezone",
     "sla_thresholds_json",
+    "roster_bucket_unassigned_id",
+    "roster_bucket_assigned_id",
 )
+
+# The two Trinity buckets that define "L2, non-Expo" tickets - Shift Watch's
+# sync trusts these buckets' own rule_tree (status/level/tag filtering)
+# entirely rather than reconstructing the same logic locally. Editable in
+# Settings if the bucket IDs ever change.
+DEFAULT_ROSTER_BUCKET_UNASSIGNED_ID = "6a29827da9ddae0205369234"  # "L2 - Unassigned Tickets"
+DEFAULT_ROSTER_BUCKET_ASSIGNED_ID = "6a2a8529475d4c85de8c9213"  # "L2 - Assigned (New Assigned + Re-opens)"
 
 
 async def seed_defaults(session: AsyncSession, settings: Settings) -> None:
@@ -31,6 +40,8 @@ async def seed_defaults(session: AsyncSession, settings: Settings) -> None:
         "tracked_agent_email": settings.tracked_agent_email,
         "reporting_timezone": settings.reporting_timezone,
         "sla_thresholds_json": {"OPEN": 24, "PENDING": 48},
+        "roster_bucket_unassigned_id": DEFAULT_ROSTER_BUCKET_UNASSIGNED_ID,
+        "roster_bucket_assigned_id": DEFAULT_ROSTER_BUCKET_ASSIGNED_ID,
     }
     existing = (await session.execute(select(Setting.key))).scalars().all()
     existing_set = set(existing)

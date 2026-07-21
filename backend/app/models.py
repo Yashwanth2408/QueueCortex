@@ -284,3 +284,29 @@ class Setting(Base):
     key: Mapped[str] = mapped_column(String, primary_key=True)
     value: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class RosterAgent(Base):
+    """One row per L2 agent appearing in an uploaded shift-roster CSV -
+    not a Trinity `Agent`, and not necessarily the tracked agent."""
+
+    __tablename__ = "roster_agents"
+
+    email: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    role: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class RosterShift(Base):
+    """One row per (agent, calendar date) shift-code cell from the roster
+    CSV - e.g. "6A-3P", "Off", "EL". Upserted by (agent_email, shift_date)
+    on each roster upload; past dates from earlier uploads are left alone."""
+
+    __tablename__ = "roster_shifts"
+    __table_args__ = (UniqueConstraint("agent_email", "shift_date", name="uq_roster_shift_agent_date"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_email: Mapped[str] = mapped_column(String, ForeignKey("roster_agents.email"), nullable=False)
+    shift_date: Mapped[date] = mapped_column(Date, nullable=False)
+    shift_code: Mapped[str] = mapped_column(String, nullable=False)

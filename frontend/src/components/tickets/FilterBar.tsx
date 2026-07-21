@@ -1,7 +1,9 @@
-import { Search } from 'lucide-react'
+import { Clock, Search } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useTagMappings } from '@/hooks/useTags'
+import { useRosterOverdueTickets } from '@/hooks/useRoster'
 
 interface Props {
   search: string
@@ -16,6 +18,8 @@ interface Props {
 export function FilterBar({ search, onSearchChange, derivedType, onDerivedTypeChange, sort, onSortChange, searchInputRef }: Props) {
   const { data: mappings } = useTagMappings()
   const types = Array.from(new Set((mappings ?? []).map((m) => m.type_label))).sort()
+  const { data: overdue } = useRosterOverdueTickets()
+  const overdueCount = overdue?.length ?? 0
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -53,6 +57,18 @@ export function FilterBar({ search, onSearchChange, derivedType, onDerivedTypeCh
           <SelectItem value="created_at:asc">Oldest open first</SelectItem>
         </SelectContent>
       </Select>
+      <Link
+        to="/shift-watch"
+        className="inline-flex h-9 items-center gap-1.5 rounded-full border border-border bg-secondary/60 px-3.5 text-sm font-medium text-foreground transition-colors hover:bg-secondary"
+      >
+        <Clock className="size-4" />
+        Shift Watch
+        {overdueCount > 0 && (
+          <span className="font-tabular inline-flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-red px-1 text-[11px] font-semibold text-destructive">
+            {overdueCount}
+          </span>
+        )}
+      </Link>
     </div>
   )
 }

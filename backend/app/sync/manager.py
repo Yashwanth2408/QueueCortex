@@ -9,6 +9,7 @@ import logging
 from app.config import Settings
 from app.db import SessionLocal
 from app.sync.engine import create_pending_run, run_full_backfill, run_incremental_sync
+from app.sync.roster_sync import run_roster_sync
 from app.trinity_client import TrinityClient
 
 logger = logging.getLogger("sync.manager")
@@ -47,8 +48,32 @@ class SyncManager:
                 except Exception:  # noqa: BLE001
                     logger.exception("sync run %s failed", run_id)
 
+            # Shift Watch: refresh roster agents' open/pending tickets at the
+            # same cadence as the personal sync. Its own try/except - a
+            # roster-sync failure shouldn't mark the personal SyncRun above
+            # as failed, since they're logically independent.
+            async with SessionLocal() as session:
+                try:
+                    await run_roster_sync(self._client, session, self._settings)
+                except Exception:  # noqa: BLE001
+                    logger.exception("roster sync failed")
+
     async def run_scheduled(self) -> None:
         try:
             await self.trigger(mode="incremental", run_type="scheduled")
         except RuntimeError:
             logger.info("scheduled sync skipped: a sync is already running")
+
+    async def run_roster_sync_now(self) -> None:
+        """Best-effort immediate roster refresh after a CSV upload, so Shift
+        Watch isn't stale until the next poll tick. Skips (rather than
+        blocking) if a sync is already in progress - the next scheduled tick
+        will pick up the new roster anyway."""
+        if self._lock.locked():
+            return
+        async with self._lock:
+            async with SessionLocal() as session:
+                try:
+                    await run_roster_sync(self._client, session, self._settings)
+                except Exception:  # noqa: BLE001
+                    logger.exception("roster sync (post-upload) failed")

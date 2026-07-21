@@ -81,7 +81,9 @@ async def actually_closed_entries(session: AsyncSession, settings: Settings) -> 
     then reopened again (same day or since) is correctly excluded: it isn't
     actually resolved, so counting it as closed would overstate progress."""
     closed_ticket_ids = (
-        await session.execute(select(Ticket.id).where(Ticket.status.in_(("CLOSED", "REJECTED"))))
+        await session.execute(
+            select(Ticket.id).where(Ticket.status.in_(("CLOSED", "REJECTED")), Ticket.is_tracked.is_(True))
+        )
     ).scalars().all()
     if not closed_ticket_ids:
         return []
@@ -118,7 +120,11 @@ async def compute_today_snapshot(session: AsyncSession, settings: Settings) -> d
     reclosed_today = len(closed_today_entries) - fresh_closed_today
 
     reopen_rows = (
-        await session.execute(select(StatusTransition).where(StatusTransition.is_reopen.is_(True), StatusTransition.event_date == today))
+        await session.execute(
+            select(StatusTransition)
+            .join(Ticket, Ticket.id == StatusTransition.ticket_id)
+            .where(StatusTransition.is_reopen.is_(True), StatusTransition.event_date == today, Ticket.is_tracked.is_(True))
+        )
     ).scalars().all()
     reopened_today = len(reopen_rows)
     customer_reopened_today = sum(1 for r in reopen_rows if r.is_customer_triggered_reopen)
@@ -130,6 +136,27 @@ async def compute_today_snapshot(session: AsyncSession, settings: Settings) -> d
         "reopened_today": reopened_today,
         "customer_reopened_today": customer_reopened_today,
     }
+
+
+async def last_assignment_at_for_agent(session: AsyncSession, ticket_ids: list[str], agent_email: str) -> dict[str, datetime]:
+    """Shift Watch's "held since": the most recent time each ticket was
+    assigned to an arbitrary (roster) agent - not the tracked agent, so this
+    queries the raw `new_assignee` column directly rather than the
+    tracked-agent-only `is_gain_for_tracked_agent` flag. "Most recent", not
+    "first ever", since a ticket can bounce away and come back."""
+    if not ticket_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(AssignmentEvent)
+            .where(AssignmentEvent.ticket_id.in_(ticket_ids), AssignmentEvent.new_assignee == agent_email)
+            .order_by(AssignmentEvent.ticket_id, AssignmentEvent.seq)
+        )
+    ).scalars().all()
+    last_assign_at: dict[str, datetime] = {}
+    for r in rows:
+        last_assign_at[r.ticket_id] = r.created_at  # ascending seq order - last write wins - most recent
+    return last_assign_at
 
 
 async def _first_self_assignments(session: AsyncSession, ticket_ids: list[str] | None = None) -> dict[str, datetime]:
@@ -239,7 +266,7 @@ async def _latest_message_directions(session: AsyncSession, ticket_ids: list[str
 
 async def compute_needs_attention_ids(session: AsyncSession, settings: Settings) -> set[str]:
     open_tickets = (
-        await session.execute(select(Ticket).where(Ticket.status.in_(("OPEN", "PENDING"))))
+        await session.execute(select(Ticket).where(Ticket.status.in_(("OPEN", "PENDING")), Ticket.is_tracked.is_(True)))
     ).scalars().all()
     if not open_tickets:
         return set()

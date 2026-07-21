@@ -162,3 +162,35 @@ export interface Setting {
   key: string
   value: SettingValue
 }
+
+export interface RosterUploadResult {
+  agents: number
+  shift_rows: number
+  date_range: (string | null)[]
+}
+
+export interface RosterAgentOut {
+  email: string
+  name: string
+  role: string
+  today_shift_code: string | null
+  tomorrow_shift_code: string | null
+}
+
+export type ShiftReason = 'on_shift' | 'shift_ended' | 'off_day' | 'before_shift_start' | 'no_data'
+
+export interface RosterOverdueTicket {
+  id: string
+  num: number
+  derived_type: string | null
+  assigned_to_email: string
+  agent_name: string
+  agent_role: string
+  is_associate_or_trainer: boolean
+  shift_code: string | null
+  reason: ShiftReason
+  held_since: string | null
+  last_event_at: string
+  trinity_url: string | null
+  alert_tags: string[]
+}

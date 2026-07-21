@@ -17,3 +17,11 @@ def to_reporting_date(dt_utc_naive: datetime, tz_name: str) -> date:
     aware_utc = dt_utc_naive.replace(tzinfo=timezone.utc)
     local = aware_utc.astimezone(ZoneInfo(tz_name))
     return local.date()
+
+
+def to_reporting_datetime(dt_utc_naive: datetime, tz_name: str) -> datetime:
+    """Like to_reporting_date, but keeps the wall-clock time - needed for
+    Shift Watch's shift-start/end comparisons, not just day attribution."""
+    aware_utc = dt_utc_naive.replace(tzinfo=timezone.utc)
+    local = aware_utc.astimezone(ZoneInfo(tz_name))
+    return local.replace(tzinfo=None)

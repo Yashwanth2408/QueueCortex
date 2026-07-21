@@ -4,6 +4,7 @@ import { TopBar } from '@/components/layout/TopBar'
 import { Dashboard } from '@/pages/Dashboard'
 import { Analytics } from '@/pages/Analytics'
 import { Settings } from '@/pages/Settings'
+import { ShiftWatch } from '@/pages/ShiftWatch'
 import { Login } from '@/pages/Login'
 import { useAuth } from '@/context/AuthContext'
 
@@ -30,6 +31,7 @@ function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/shift-watch" element={<ShiftWatch />} />
         </Routes>
       </main>
     </div>

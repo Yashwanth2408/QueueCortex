@@ -101,6 +101,7 @@ export function useAddComment(ticketId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['comments', ticketId] })
       qc.invalidateQueries({ queryKey: ['ticket', ticketId] })
+      qc.invalidateQueries({ queryKey: ['roster-ticket', ticketId] })
     },
   })
 }
@@ -112,6 +113,7 @@ export function useDeleteComment(ticketId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['comments', ticketId] })
       qc.invalidateQueries({ queryKey: ['ticket', ticketId] })
+      qc.invalidateQueries({ queryKey: ['roster-ticket', ticketId] })
     },
   })
 }

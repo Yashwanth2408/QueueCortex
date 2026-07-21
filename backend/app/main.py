@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.api import routes_analytics, routes_auth, routes_settings, routes_sync, routes_tags, routes_tickets
+from app.api import routes_analytics, routes_auth, routes_roster, routes_settings, routes_sync, routes_tags, routes_tickets
 from app.auth import SESSION_COOKIE, verify_session_token
 from app.config import get_settings
 from app.db import SessionLocal
@@ -73,6 +73,7 @@ app.include_router(routes_sync.router, prefix="/api/v1")
 app.include_router(routes_tags.router, prefix="/api/v1")
 app.include_router(routes_settings.router, prefix="/api/v1")
 app.include_router(routes_analytics.router, prefix="/api/v1")
+app.include_router(routes_roster.router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health")

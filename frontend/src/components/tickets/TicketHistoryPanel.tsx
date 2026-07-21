@@ -3,9 +3,9 @@ import { Loader2, MessageSquareQuote, Send, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
-import { useAddComment, useDeleteComment, useTicketDetail } from '@/hooks/useTickets'
+import { useAddComment, useDeleteComment } from '@/hooks/useTickets'
 import { absoluteTime, relativeTime } from '@/lib/format'
-import type { AssignmentEventOut, StatusTransition, CsatEventOut } from '@/types'
+import type { AssignmentEventOut, StatusTransition, CsatEventOut, TicketDetail } from '@/types'
 
 type TimelineEntry = {
   created_at: string
@@ -73,8 +73,13 @@ const DOT_CLASS: Record<TimelineEntry['tone'], string> = {
   taken: 'bg-destructive',
 }
 
-export function TicketHistoryPanel({ ticketId }: { ticketId: string }) {
-  const { data: detail, isLoading } = useTicketDetail(ticketId)
+interface Props {
+  ticketId: string
+  detail: TicketDetail | undefined
+  isLoading: boolean
+}
+
+export function TicketHistoryPanel({ ticketId, detail, isLoading }: Props) {
   const [showAll, setShowAll] = useState(false)
   const [draft, setDraft] = useState('')
   const addComment = useAddComment(ticketId)

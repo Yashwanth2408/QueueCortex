@@ -227,3 +227,33 @@ class AnalyticsSummaryBucket(BaseModel):
 class TimeseriesPoint(BaseModel):
     bucket: str
     value: float
+
+
+class RosterUploadResult(BaseModel):
+    agents: int
+    shift_rows: int
+    date_range: list[date | None]
+
+
+class RosterAgentOut(BaseModel):
+    email: str
+    name: str
+    role: str
+    today_shift_code: str | None
+    tomorrow_shift_code: str | None
+
+
+class RosterOverdueTicket(BaseModel):
+    id: str
+    num: int
+    derived_type: str | None
+    assigned_to_email: str
+    agent_name: str
+    agent_role: str
+    is_associate_or_trainer: bool
+    shift_code: str | None
+    reason: str
+    held_since: datetime | None
+    last_event_at: datetime
+    trinity_url: str | None
+    alert_tags: list[str]

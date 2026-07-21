@@ -151,7 +151,9 @@ async def recompute_all_derived_types(session: AsyncSession) -> None:
 # Ticket snapshot ingestion
 # ---------------------------------------------------------------------------
 
-async def _upsert_ticket_from_list_item(session: AsyncSession, item: dict, settings: Settings, now: datetime) -> Ticket:
+async def _upsert_ticket_from_list_item(
+    session: AsyncSession, item: dict, settings: Settings, now: datetime, mark_personal: bool = True
+) -> Ticket:
     ticket = await session.get(Ticket, item["id"])
     is_new = ticket is None
     if is_new:
@@ -164,6 +166,11 @@ async def _upsert_ticket_from_list_item(session: AsyncSession, item: dict, setti
             last_event_at=parse_trinity_dt(item["updated_at"]),
             added_to_tracker_at=now,
             last_synced_at=now,
+            # Explicit, not relying on the column default: a brand-new ticket
+            # ingested via the roster path (mark_personal=False) must NOT
+            # start out is_tracked=True just because that's the column's
+            # declared default for the (far more common) personal-sync case.
+            is_tracked=mark_personal,
         )
         session.add(ticket)
 
@@ -185,7 +192,14 @@ async def _upsert_ticket_from_list_item(session: AsyncSession, item: dict, setti
     ticket.last_customer_message_at = parse_trinity_dt(item.get("last_customer_message_at"))
     ticket.updated_at_trinity = parse_trinity_dt(item["updated_at"])
     ticket.trinity_url = settings.trinity_ticket_url_template.format(id=item["id"], num=item["num"])
-    ticket.is_tracked = True
+    if mark_personal:
+        # Only the tracked-agent sync path (run_full_backfill/run_incremental_sync)
+        # sets this - it's the boundary that keeps Dashboard/Analytics scoped to
+        # Yashwanth's own tickets even once Shift Watch starts ingesting other
+        # agents' tickets into these same tables. Never flip it back to False:
+        # a ticket taken from the tracked agent should stay in their history
+        # (taken_from_me tracking) even if a roster agent now holds it.
+        ticket.is_tracked = True
     ticket.last_synced_at = now
     ticket.sync_error = None
 
@@ -423,7 +437,13 @@ async def resolve_ticket_num(session: AsyncSession, client: TrinityClient, num: 
 
 
 async def _ingest_single_ticket(
-    client: TrinityClient, session: AsyncSession, ticket_id: str, settings: Settings, now: datetime, full: bool
+    client: TrinityClient,
+    session: AsyncSession,
+    ticket_id: str,
+    settings: Settings,
+    now: datetime,
+    full: bool,
+    mark_personal: bool = True,
 ) -> tuple[Ticket, int]:
     if full:
         full_data = await client.get_ticket(ticket_id)
@@ -444,17 +464,46 @@ async def _ingest_single_ticket(
             "created_at": full_data["created_at"],
             "updated_at": full_data["updated_at"],
         }
-        ticket = await _upsert_ticket_from_list_item(session, item, settings, now)
+        ticket = await _upsert_ticket_from_list_item(session, item, settings, now, mark_personal=mark_personal)
         await _enrich_ticket_from_get_ticket(session, ticket, full_data, now)
     else:
         ticket = await session.get(Ticket, ticket_id)
         full_data = await client.get_ticket(ticket_id)
         await _enrich_ticket_from_get_ticket(session, ticket, full_data, now)
+        if mark_personal:
+            # Covers claiming a ticket Shift Watch already pulled in (is_tracked=False,
+            # since it was ingested for a different agent) via "add ticket by number" -
+            # the explicit personal add must bring it into the tracked-agent's scope.
+            ticket.is_tracked = True
 
     events_ingested = await _sync_ticket_events(client, session, ticket, settings, now, full=full)
     await recompute_derived_type(session, ticket)
     await session.flush()
     return ticket, events_ingested
+
+
+async def ingest_ticket_for_roster(
+    client: TrinityClient, session: AsyncSession, ticket_id: str, settings: Settings, now: datetime, full: bool
+) -> tuple[Ticket, int]:
+    """Entry point for the roster (Shift Watch) sync path - identical
+    ingestion pipeline to the tracked-agent sync, but never marks the
+    ticket personal (`is_tracked`), keeping Yashwanth's own Dashboard/
+    Analytics numbers unaffected by other agents' tickets."""
+    return await _ingest_single_ticket(client, session, ticket_id, settings, now, full=full, mark_personal=False)
+
+
+async def refresh_roster_ticket_incremental(
+    client: TrinityClient, session: AsyncSession, item: dict, settings: Settings, now: datetime
+) -> int:
+    """Lightweight incremental refresh for a roster ticket already ingested
+    at least once - mirrors run_incremental_sync's non-full branch exactly,
+    still never marking it personal (`mark_personal=False`)."""
+    ticket = await _upsert_ticket_from_list_item(session, item, settings, now, mark_personal=False)
+    full_data = await client.get_ticket(ticket.id)
+    await _enrich_ticket_from_get_ticket(session, ticket, full_data, now)
+    ingested = await _sync_ticket_events(client, session, ticket, settings, now, full=False)
+    await recompute_derived_type(session, ticket)
+    return ingested
 
 
 async def create_pending_run(session: AsyncSession, run_type: str) -> int:

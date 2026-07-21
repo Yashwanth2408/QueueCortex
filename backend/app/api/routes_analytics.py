@@ -17,7 +17,7 @@ from app.api.deps import get_app_settings
 from app.config import Settings
 from app.db import get_session
 from app.derive import actually_closed_entries, compute_final_close_durations, compute_response_durations
-from app.models import StatusTransition
+from app.models import StatusTransition, Ticket
 from app.schemas import AnalyticsSummaryBucket, TimeseriesPoint
 
 router = APIRouter(tags=["analytics"])
@@ -32,7 +32,11 @@ def _bucket_key(d: date, period: str) -> str:
 
 
 async def _load_reopen_events(session: AsyncSession, date_from: date | None, date_to: date | None):
-    stmt = select(StatusTransition).where(StatusTransition.is_reopen.is_(True))
+    stmt = (
+        select(StatusTransition)
+        .join(Ticket, Ticket.id == StatusTransition.ticket_id)
+        .where(StatusTransition.is_reopen.is_(True), Ticket.is_tracked.is_(True))
+    )
     rows = (await session.execute(stmt)).scalars().all()
     reopen_events = [
         {"ticket_id": r.ticket_id, "event_date": r.event_date, "is_customer_triggered": r.is_customer_triggered_reopen} for r in rows
