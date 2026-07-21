@@ -1,0 +1,182 @@
+@import "tailwindcss";
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Consolas, 'Liberation Mono', monospace;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Ticket-state semantics only - never used as the brand/primary color. */
+  --color-amber: var(--amber);
+  --color-amber-foreground: var(--amber-foreground);
+  --color-green: var(--green);
+  --color-green-foreground: var(--green-foreground);
+  --color-indigo: var(--indigo);
+  --color-indigo-foreground: var(--indigo-foreground);
+  --color-red: var(--red);
+
+  /* Apple-style tiered radius: capsule for CTAs/chips/search, tighter
+     rounded-rects for toolbar controls/inputs, generous for cards/sheets. */
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-2xl: 28px;
+
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
+  --animate-fade-up: fade-up 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-pulse-once: pulse-once 0.4s ease-out;
+
+  @keyframes accordion-down {
+    from {
+      height: 0;
+    }
+    to {
+      height: var(--radix-accordion-content-height);
+    }
+  }
+  @keyframes accordion-up {
+    from {
+      height: var(--radix-accordion-content-height);
+    }
+    to {
+      height: 0;
+    }
+  }
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes pulse-once {
+    0% {
+      opacity: 0.4;
+      transform: scale(0.92);
+    }
+    60% {
+      opacity: 1;
+      transform: scale(1.04);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+}
+
+/* Apple/iOS-inspired palette: true achromatic neutrals (no hue tint toward
+   any brand color), a monochrome primary (near-black on white / near-white
+   on black - the strongest-contrast element on the page, not a color), and
+   ticket-state semantics (green/orange/red/indigo) kept intentionally
+   separate from "primary" so they never compete with it. Zero gradients:
+   elevation comes from lightness-stepping, blur, hairlines and soft shadow
+   only (see card.tsx/dialog.tsx/TopBar.tsx for the shadow/blur values). */
+:root {
+  --background: oklch(0.97 0.003 260);
+  --foreground: oklch(0.145 0.004 260);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0.004 260);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0.004 260);
+  --primary: oklch(0.145 0.004 260);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.93 0.004 260);
+  --secondary-foreground: oklch(0.145 0.004 260);
+  --muted: oklch(0.94 0.004 260);
+  --muted-foreground: oklch(0.48 0.008 260);
+  --accent: oklch(0.93 0.004 260);
+  --accent-foreground: oklch(0.145 0.004 260);
+  --destructive: oklch(0.58 0.22 25);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border: oklch(0 0 0 / 8%);
+  --input: oklch(0 0 0 / 10%);
+  --ring: oklch(0 0 0 / 25%);
+
+  --amber: oklch(0.94 0.09 60);
+  --amber-foreground: oklch(0.35 0.13 45);
+  --green: oklch(0.91 0.06 145);
+  --green-foreground: oklch(0.32 0.1 150);
+  --indigo: oklch(0.92 0.03 293);
+  --indigo-foreground: oklch(0.45 0.2 293);
+  --red: oklch(0.94 0.05 25);
+}
+
+.dark {
+  --background: oklch(0.16 0.004 260);
+  --foreground: oklch(0.97 0 0);
+  --card: oklch(0.2 0.005 260);
+  --card-foreground: oklch(0.97 0 0);
+  --popover: oklch(0.24 0.006 260);
+  --popover-foreground: oklch(0.97 0 0);
+  --primary: oklch(0.97 0 0);
+  --primary-foreground: oklch(0.16 0.004 260);
+  --secondary: oklch(0.27 0.006 260);
+  --secondary-foreground: oklch(0.97 0 0);
+  --muted: oklch(0.3 0.006 260);
+  --muted-foreground: oklch(0.66 0.01 260);
+  --accent: oklch(0.29 0.007 260);
+  --accent-foreground: oklch(0.97 0 0);
+  --destructive: oklch(0.64 0.21 25);
+  --destructive-foreground: oklch(0.98 0.01 25);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(1 0 0 / 35%);
+
+  --amber: oklch(0.32 0.09 55);
+  --amber-foreground: oklch(0.88 0.13 55);
+  --green: oklch(0.28 0.06 145);
+  --green-foreground: oklch(0.78 0.15 150);
+  --indigo: oklch(0.28 0.08 293);
+  --indigo-foreground: oklch(0.78 0.16 293);
+  --red: oklch(0.3 0.08 25);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv11', 'ss01';
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3 {
+    letter-spacing: -0.02em;
+  }
+  ::selection {
+    background: color-mix(in oklch, var(--foreground) 20%, transparent);
+  }
+}
+
+@layer utilities {
+  .font-tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}

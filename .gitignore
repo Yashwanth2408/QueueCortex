@@ -1,0 +1,31 @@
+# Secrets - never commit real credentials
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# Local SQLite database (contains real customer/ticket data, fully
+# rebuildable from Trinity - see README)
+backend/data/
+
+# Python
+backend/.venv/
+**/__pycache__/
+*.pyc
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+*.local
+
+# Local tool/editor state, not app source
+.claude/
+.cora/
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# OS junk
+.DS_Store
+Thumbs.db
+*.log
