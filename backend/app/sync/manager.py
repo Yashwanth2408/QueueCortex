@@ -25,10 +25,25 @@ class SyncManager:
     def is_running(self) -> bool:
         return self._lock.locked()
 
-    async def trigger(self, mode: str, run_type: str) -> int:
+    async def trigger(self, mode: str, run_type: str, wait_if_busy: bool = False) -> int:
         """Create the SyncRun row synchronously and kick off the work in the
-        background. Raises RuntimeError if a sync is already in progress."""
-        if self._lock.locked():
+        background.
+
+        wait_if_busy=False (the scheduled poll's behavior): raises
+        RuntimeError immediately if a sync (personal or Shift Watch's
+        roster sync - they share one lock so the two never write to
+        SQLite at once) is already running, since the next scheduled tick
+        will pick it up anyway - no need to queue behind it.
+
+        wait_if_busy=True (manual "Sync now" clicks): never raises for
+        that reason - the run is created as 'running' right away and
+        _execute simply queues on the same lock, starting the moment
+        whatever's currently using it finishes. A user-initiated click
+        should always eventually run rather than bounce off a background
+        job they don't know is in progress; the frontend already polls
+        the run until it completes either way, so there's nothing extra
+        to wait for on that end."""
+        if not wait_if_busy and self._lock.locked():
             raise RuntimeError("A sync is already running")
 
         async with SessionLocal() as session:

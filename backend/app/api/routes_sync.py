@@ -15,10 +15,10 @@ router = APIRouter(tags=["sync"])
 @router.post("/sync/run", status_code=202)
 async def trigger_sync(body: SyncRunRequest, manager: SyncManager = Depends(get_sync_manager)):
     run_type = "manual" if body.mode == "incremental" else "backfill"
-    try:
-        run_id = await manager.trigger(mode=body.mode, run_type=run_type)
-    except RuntimeError as exc:
-        raise HTTPException(409, str(exc)) from exc
+    # wait_if_busy=True: a manual click should always eventually run rather
+    # than bounce off a background poll it doesn't know is in progress -
+    # see the docstring on SyncManager.trigger.
+    run_id = await manager.trigger(mode=body.mode, run_type=run_type, wait_if_busy=True)
     return {"sync_run_id": run_id}
 
 
