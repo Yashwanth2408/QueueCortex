@@ -4,21 +4,16 @@ import { useStatusCounts } from '@/hooks/useTickets'
 
 export interface ChipFilter {
   status?: string
-  level?: string
-  assigned_to?: string
   closed_today?: boolean
 }
 
-export type ChipKey = 'open' | 'pending' | 'closed_today' | 'rejected' | 'blocked' | 'escalated' | 'unassigned'
+export type ChipKey = 'open' | 'pending' | 'closed_today' | 'rejected'
 
 const CHIPS: { key: ChipKey; label: string; filter: ChipFilter }[] = [
   { key: 'open', label: 'Open', filter: { status: 'OPEN' } },
   { key: 'pending', label: 'Pending', filter: { status: 'PENDING' } },
   { key: 'closed_today', label: 'Closed today', filter: { closed_today: true } },
   { key: 'rejected', label: 'Rejected', filter: { status: 'REJECTED' } },
-  { key: 'blocked', label: 'Blocked', filter: { status: 'BLOCKED' } },
-  { key: 'escalated', label: 'Escalated', filter: { level: 'L3' } },
-  { key: 'unassigned', label: 'Unassigned', filter: { assigned_to: 'unassigned' } },
 ]
 
 interface Props {
@@ -104,7 +99,7 @@ export function StatusChips({
       </button>
       <button
         onClick={onToggleEscalatedByMe}
-        title="Tickets escalated from L2 to L3 while in your history"
+        title="Tickets you pushed from L2 to L3 and handed off yourself"
         className={cn(
           'inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium transition-colors duration-100',
           escalatedByMeActive ? 'bg-red text-destructive font-semibold' : 'text-destructive/80 hover:bg-red/60',
@@ -115,7 +110,7 @@ export function StatusChips({
       </button>
       <button
         onClick={onToggleDeescalatedByMe}
-        title="Tickets de-escalated from L2 to L1 while in your history"
+        title="Tickets you pushed from L2 to L1 and handed off yourself"
         className={cn(
           'inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium transition-colors duration-100',
           deescalatedByMeActive ? 'bg-amber text-amber-foreground font-semibold' : 'text-amber-foreground/80 hover:bg-amber/50',

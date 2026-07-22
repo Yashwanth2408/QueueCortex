@@ -81,12 +81,20 @@ async def ticket_status_counts(
         )
     ).scalar_one()
 
+    # Only transitions the tracked agent themselves performed count as
+    # "escalated"/"de-escalated" - not just any level change that happened to
+    # land on a ticket that's/was theirs (e.g. a supervisor correcting the
+    # level while they still hold it).
     escalated_count = (
         await session.execute(
             select(func.count(func.distinct(LevelTransition.ticket_id)))
             .select_from(LevelTransition)
             .join(Ticket, Ticket.id == LevelTransition.ticket_id)
-            .where(LevelTransition.is_escalation.is_(True), Ticket.is_tracked.is_(True))
+            .where(
+                LevelTransition.is_escalation.is_(True),
+                LevelTransition.performed_by_email == settings.tracked_agent_email,
+                Ticket.is_tracked.is_(True),
+            )
         )
     ).scalar_one()
 
@@ -95,7 +103,11 @@ async def ticket_status_counts(
             select(func.count(func.distinct(LevelTransition.ticket_id)))
             .select_from(LevelTransition)
             .join(Ticket, Ticket.id == LevelTransition.ticket_id)
-            .where(LevelTransition.is_deescalation.is_(True), Ticket.is_tracked.is_(True))
+            .where(
+                LevelTransition.is_deescalation.is_(True),
+                LevelTransition.performed_by_email == settings.tracked_agent_email,
+                Ticket.is_tracked.is_(True),
+            )
         )
     ).scalar_one()
 
@@ -192,7 +204,13 @@ async def list_tickets(
 
     if escalated:
         escalated_ids = (
-            (await session.execute(select(LevelTransition.ticket_id).where(LevelTransition.is_escalation.is_(True)).distinct()))
+            (
+                await session.execute(
+                    select(LevelTransition.ticket_id)
+                    .where(LevelTransition.is_escalation.is_(True), LevelTransition.performed_by_email == settings.tracked_agent_email)
+                    .distinct()
+                )
+            )
             .scalars()
             .all()
         )
@@ -200,7 +218,13 @@ async def list_tickets(
 
     if deescalated:
         deescalated_ids = (
-            (await session.execute(select(LevelTransition.ticket_id).where(LevelTransition.is_deescalation.is_(True)).distinct()))
+            (
+                await session.execute(
+                    select(LevelTransition.ticket_id)
+                    .where(LevelTransition.is_deescalation.is_(True), LevelTransition.performed_by_email == settings.tracked_agent_email)
+                    .distinct()
+                )
+            )
             .scalars()
             .all()
         )
@@ -217,7 +241,7 @@ async def list_tickets(
     flags = await compute_ticket_flags(session, [t.id for t in tickets])
     assignment_flags = await compute_assignment_flags(session, [t.id for t in tickets])
     self_release_flags = await compute_self_release_flags(session, [t.id for t in tickets])
-    level_flags = await compute_level_flags(session, [t.id for t in tickets])
+    level_flags = await compute_level_flags(session, [t.id for t in tickets], settings)
     na_ids = await compute_needs_attention_ids(session, settings) if not needs_attention else na_ids
 
     items = []

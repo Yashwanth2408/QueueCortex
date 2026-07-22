@@ -92,9 +92,12 @@ async def compute_self_release_flags(session: AsyncSession, ticket_ids: list[str
     return out
 
 
-async def compute_level_flags(session: AsyncSession, ticket_ids: list[str]) -> dict[str, dict]:
-    """Escalation (->L3) / de-escalation (->L1) tracking for tickets the
-    tracked agent has held. `possible_reason` is a best-effort guess (a
+async def compute_level_flags(session: AsyncSession, ticket_ids: list[str], settings: Settings) -> dict[str, dict]:
+    """Escalation (L2->L3) / de-escalation (L2->L1) tracking - but only for
+    transitions the TRACKED AGENT THEMSELVES performed (push it to L3/L1 and
+    hand it off), not just any level change that happened to occur on a
+    ticket that's/was theirs (e.g. a supervisor correcting the level on a
+    ticket they still hold). `possible_reason` is a best-effort guess (a
     nearby internal note by the same author, if any was found at derivation
     time) - Trinity's level_changed events have no reason field of their own."""
     if not ticket_ids:
@@ -102,7 +105,11 @@ async def compute_level_flags(session: AsyncSession, ticket_ids: list[str]) -> d
     rows = (
         await session.execute(
             select(LevelTransition)
-            .where(LevelTransition.ticket_id.in_(ticket_ids), or_(LevelTransition.is_escalation.is_(True), LevelTransition.is_deescalation.is_(True)))
+            .where(
+                LevelTransition.ticket_id.in_(ticket_ids),
+                LevelTransition.performed_by_email == settings.tracked_agent_email,
+                or_(LevelTransition.is_escalation.is_(True), LevelTransition.is_deescalation.is_(True)),
+            )
             .order_by(LevelTransition.seq)
         )
     ).scalars().all()
