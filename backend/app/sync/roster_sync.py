@@ -14,19 +14,22 @@ Trinity's bucket setup ever changes."""
 
 from datetime import datetime
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.models import Ticket
 from app.settings_store import DEFAULT_ROSTER_BUCKET_ASSIGNED_ID, DEFAULT_ROSTER_BUCKET_UNASSIGNED_ID, get_value
-from app.sync.engine import ingest_ticket_for_roster, refresh_roster_ticket_incremental
+from app.sync.engine import ingest_ticket_for_roster, refresh_roster_ticket_incremental, refresh_ticket_snapshot
 from app.sync.timeutil import parse_trinity_dt, utcnow
 from app.trinity_client import TrinityClient
 
 ROSTER_SYNC_PAGE_LIMIT = 100
 
 
-async def _sync_bucket(client: TrinityClient, session: AsyncSession, settings: Settings, bucket_id: str, now: datetime) -> dict:
+async def _sync_bucket(
+    client: TrinityClient, session: AsyncSession, settings: Settings, bucket_id: str, now: datetime, touched_ids: set[str]
+) -> dict:
     checked = updated = events = 0
     errors: list[str] = []
     cursor = None
@@ -42,6 +45,7 @@ async def _sync_bucket(client: TrinityClient, session: AsyncSession, settings: S
         items = page.get("items", [])
         for item in items:
             checked += 1
+            touched_ids.add(item["id"])
             try:
                 existing = await session.get(Ticket, item["id"])
                 if existing is None:
@@ -55,6 +59,11 @@ async def _sync_bucket(client: TrinityClient, session: AsyncSession, settings: S
                 events += ingested
                 await session.flush()
             except Exception as exc:  # noqa: BLE001
+                # A flush failure leaves the session unable to run any
+                # further statements until rolled back - without this, one
+                # bad ticket would silently poison every ticket after it in
+                # this same pass.
+                await session.rollback()
                 errors.append(f"ticket #{item.get('num')}: {exc}")
 
         cursor = page.get("next_cursor")
@@ -68,16 +77,53 @@ async def _sync_bucket(client: TrinityClient, session: AsyncSession, settings: S
     return {"checked": checked, "updated": updated, "events": events, "errors": errors}
 
 
+async def _supplemental_pass(
+    client: TrinityClient, session: AsyncSession, settings: Settings, now: datetime, touched_ids: set[str]
+) -> dict:
+    """The two buckets only ever return currently-OPEN tickets (baked into
+    their Trinity rule_tree), so a roster ticket that quietly closes - or
+    gets picked up and resolved - simply stops appearing in the bucket
+    fetch above. Without this, our local copy would stay stuck showing it
+    as OPEN/PENDING forever, so it'd keep surfacing in Shift Watch even
+    after it's actually done. Re-check every roster ticket we're still
+    showing as OPEN/PENDING by id, mirroring the personal sync's
+    supplemental pass - no need to keep re-checking ones already closed."""
+    stale_ids = (
+        await session.execute(select(Ticket.id).where(Ticket.is_tracked.is_(False), Ticket.status.in_(("OPEN", "PENDING"))))
+    ).scalars().all()
+
+    checked = updated = events = 0
+    errors: list[str] = []
+    for ticket_id in stale_ids:
+        if ticket_id in touched_ids:
+            continue
+        checked += 1
+        try:
+            ingested = await refresh_ticket_snapshot(client, session, ticket_id, settings, now)
+            if ingested:
+                updated += 1
+            events += ingested
+            await session.flush()
+        except Exception as exc:  # noqa: BLE001
+            await session.rollback()
+            errors.append(f"ticket {ticket_id}: {exc}")
+
+    await session.commit()
+    return {"checked": checked, "updated": updated, "events": events, "errors": errors}
+
+
 async def run_roster_sync(client: TrinityClient, session: AsyncSession, settings: Settings) -> dict:
     unassigned_bucket = await get_value(session, "roster_bucket_unassigned_id", DEFAULT_ROSTER_BUCKET_UNASSIGNED_ID)
     assigned_bucket = await get_value(session, "roster_bucket_assigned_id", DEFAULT_ROSTER_BUCKET_ASSIGNED_ID)
 
     now = utcnow()
+    touched_ids: set[str] = set()
     results = [
-        await _sync_bucket(client, session, settings, bucket_id, now)
+        await _sync_bucket(client, session, settings, bucket_id, now, touched_ids)
         for bucket_id in (unassigned_bucket, assigned_bucket)
         if bucket_id
     ]
+    results.append(await _supplemental_pass(client, session, settings, now, touched_ids))
 
     return {
         "tickets_checked": sum(r["checked"] for r in results),

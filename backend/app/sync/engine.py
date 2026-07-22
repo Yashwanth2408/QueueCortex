@@ -585,6 +585,38 @@ async def refresh_roster_ticket_incremental(
     return ingested
 
 
+async def refresh_ticket_snapshot(
+    client: TrinityClient, session: AsyncSession, ticket_id: str, settings: Settings, now: datetime
+) -> int:
+    """Re-fetch a single already-known ticket by id and pull any new events
+    since last sync. Used by supplemental passes that re-check tickets
+    directly by id: Trinity's filtered `list_tickets` calls (assigned_to=...,
+    bucket_id=...) only return CURRENT matches, so a ticket that quietly
+    changes status/assignment and drops out of that filter (e.g. closes, or
+    gets reassigned away) would otherwise never be seen again and the local
+    copy would go stale forever."""
+    ticket = await session.get(Ticket, ticket_id)
+    if ticket is None:
+        return 0
+    full_data = await client.get_ticket(ticket_id)
+    # Stub the agent record first if this is someone we've never seen
+    # before (e.g. a roster ticket reassigned to a brand-new agent) -
+    # assigned_agent_id is FK-constrained against agents.id.
+    await _upsert_agent_stub(session, full_data.get("assigned_agent_id"), full_data.get("assigned_to"), now)
+    ticket.status = full_data["status"]
+    ticket.level = full_data.get("level")
+    ticket.assigned_agent_id = full_data.get("assigned_agent_id")
+    ticket.assigned_to_email = full_data.get("assigned_to")
+    if full_data.get("tags") is not None:
+        ticket.tags_cache = full_data.get("tags")
+        ticket.tag_ids_cache = full_data.get("tag_ids")
+        await _upsert_tags(session, ticket.id, full_data.get("tags") or [], full_data.get("tag_ids") or [], now)
+    await _enrich_ticket_from_get_ticket(session, ticket, full_data, now)
+    ingested = await _sync_ticket_events(client, session, ticket, settings, now, full=False)
+    await recompute_derived_type(session, ticket)
+    return ingested
+
+
 async def create_pending_run(session: AsyncSession, run_type: str) -> int:
     run = SyncRun(run_type=run_type, started_at=utcnow(), status="running")
     session.add(run)
@@ -682,22 +714,8 @@ async def run_incremental_sync(client: TrinityClient, session: AsyncSession, set
         for ticket_id in all_local_ids:
             if ticket_id in touched_ids:
                 continue
-            ticket = await session.get(Ticket, ticket_id)
-            if ticket is None:
-                continue
             checked += 1
-            full_data = await client.get_ticket(ticket_id)
-            ticket.status = full_data["status"]
-            ticket.level = full_data.get("level")
-            ticket.assigned_agent_id = full_data.get("assigned_agent_id")
-            ticket.assigned_to_email = full_data.get("assigned_to")
-            if full_data.get("tags") is not None:
-                ticket.tags_cache = full_data.get("tags")
-                ticket.tag_ids_cache = full_data.get("tag_ids")
-                await _upsert_tags(session, ticket.id, full_data.get("tags") or [], full_data.get("tag_ids") or [], now)
-            await _enrich_ticket_from_get_ticket(session, ticket, full_data, now)
-            ingested = await _sync_ticket_events(client, session, ticket, settings, now, full=False)
-            await recompute_derived_type(session, ticket)
+            ingested = await refresh_ticket_snapshot(client, session, ticket_id, settings, now)
             if ingested:
                 updated += 1
             events += ingested

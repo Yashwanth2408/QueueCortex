@@ -48,16 +48,6 @@ class SyncManager:
                 except Exception:  # noqa: BLE001
                     logger.exception("sync run %s failed", run_id)
 
-            # Shift Watch: refresh roster agents' open/pending tickets at the
-            # same cadence as the personal sync. Its own try/except - a
-            # roster-sync failure shouldn't mark the personal SyncRun above
-            # as failed, since they're logically independent.
-            async with SessionLocal() as session:
-                try:
-                    await run_roster_sync(self._client, session, self._settings)
-                except Exception:  # noqa: BLE001
-                    logger.exception("roster sync failed")
-
     async def run_scheduled(self) -> None:
         try:
             await self.trigger(mode="incremental", run_type="scheduled")
@@ -65,10 +55,12 @@ class SyncManager:
             logger.info("scheduled sync skipped: a sync is already running")
 
     async def run_roster_sync_now(self) -> None:
-        """Best-effort immediate roster refresh after a CSV upload, so Shift
-        Watch isn't stale until the next poll tick. Skips (rather than
-        blocking) if a sync is already in progress - the next scheduled tick
-        will pick up the new roster anyway."""
+        """Shift Watch's own sync - runs on a separate, more frequent
+        schedule than the personal sync (see scheduler.py), plus once
+        immediately after a roster CSV upload. Uses the same lock as the
+        personal sync (not a second, independent one) so they never run
+        concurrently against the same SQLite file; skips rather than blocks
+        if one's already in progress - the next tick picks it up anyway."""
         if self._lock.locked():
             return
         async with self._lock:
@@ -76,4 +68,4 @@ class SyncManager:
                 try:
                     await run_roster_sync(self._client, session, self._settings)
                 except Exception:  # noqa: BLE001
-                    logger.exception("roster sync (post-upload) failed")
+                    logger.exception("roster sync failed")
