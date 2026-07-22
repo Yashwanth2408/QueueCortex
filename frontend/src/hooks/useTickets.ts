@@ -12,6 +12,9 @@ export interface TicketFilters {
   needs_attention?: boolean
   closed_today?: boolean
   taken_from_me?: boolean
+  self_released?: boolean
+  escalated?: boolean
+  deescalated?: boolean
   sort?: string
   page?: number
   page_size?: number
@@ -49,6 +52,9 @@ export interface StatusCounts {
   customer_reopened_today: number
   needs_attention: number
   taken_from_me: number
+  self_released: number
+  escalated_count: number
+  deescalated_count: number
 }
 
 export function useStatusCounts() {

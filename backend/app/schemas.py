@@ -37,9 +37,26 @@ class AssignmentEventOut(BaseModel):
     new_assignee: str | None
     is_gain_for_tracked_agent: bool
     is_taken_from_tracked_agent: bool
+    is_self_release_for_tracked_agent: bool
     is_system_action: bool
     reason: str | None
     performed_by_email: str | None
+    event_date: date
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LevelTransitionOut(BaseModel):
+    id: int
+    seq: int
+    old_level: str | None
+    new_level: str | None
+    is_escalation: bool
+    is_deescalation: bool
+    is_system_action: bool
+    performed_by_email: str | None
+    possible_reason: str | None
     event_date: date
     created_at: datetime
 
@@ -104,6 +121,14 @@ class TicketListItem(BaseModel):
     taken_from_me_count: int = 0
     last_taken_from_me_at: datetime | None = None
     last_taken_from_me_reason: str | None = None
+    self_released_count: int = 0
+    last_self_released_at: datetime | None = None
+    last_self_released_reason: str | None = None
+    escalated_count: int = 0
+    last_escalated_at: datetime | None = None
+    deescalated_count: int = 0
+    last_deescalated_at: datetime | None = None
+    last_level_change_reason: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -142,6 +167,7 @@ class TicketDetailOut(BaseModel):
     trinity_url: str | None
     status_transitions: list[StatusTransitionOut]
     assignment_events: list[AssignmentEventOut]
+    level_transitions: list[LevelTransitionOut]
     csat_events: list[CsatEventOut]
     duplicates: list[TicketDuplicateOut]
     last_trinity_internal_note: str | None

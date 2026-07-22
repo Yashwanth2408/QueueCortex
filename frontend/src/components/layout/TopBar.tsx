@@ -10,6 +10,7 @@ import { useSyncRun, useSyncStatus, useTriggerSync } from '@/hooks/useSync'
 import { relativeTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { APP_VERSION } from '@/lib/version'
+import logo from '@/assets/Gemini_Generated_Image_zbvogszbvogszbvo_bgremoved.png'
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard' },
@@ -73,7 +74,9 @@ export function TopBar() {
     <header className="sticky top-0 z-40 border-b border-border bg-background/72 backdrop-blur-xl backdrop-saturate-150">
       <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3">
         <div className="flex items-center gap-2">
-          <div className="flex size-6 items-center justify-center rounded-lg bg-foreground text-[13px] font-bold text-background">Q</div>
+          <div className="flex size-6 items-center justify-center rounded-lg bg-foreground p-1">
+            <img src={logo} alt="" className="size-full object-contain dark:invert" />
+          </div>
           <span className="text-[15px] font-semibold tracking-tight">QueueCortex</span>
           <span className="font-tabular text-[11px] font-medium text-muted-foreground">v{APP_VERSION}</span>
         </div>

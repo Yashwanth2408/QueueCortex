@@ -6,6 +6,7 @@ import { StatusChips, type ChipFilter, type ChipKey } from '@/components/tickets
 import { FilterBar } from '@/components/tickets/FilterBar'
 import { TicketTable } from '@/components/tickets/TicketTable'
 import { AddTicketModal } from '@/components/tickets/AddTicketModal'
+import { ShiftReminderBanner } from '@/components/dashboard/ShiftReminderBanner'
 import { useStatusCounts, useTickets } from '@/hooks/useTickets'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 
@@ -14,6 +15,9 @@ export function Dashboard() {
   const [chipFilter, setChipFilter] = useState<ChipFilter | null>(null)
   const [needsAttention, setNeedsAttention] = useState(false)
   const [takenFromMe, setTakenFromMe] = useState(false)
+  const [selfReleased, setSelfReleased] = useState(false)
+  const [escalatedByMe, setEscalatedByMe] = useState(false)
+  const [deescalatedByMe, setDeescalatedByMe] = useState(false)
   const [search, setSearch] = useState('')
   const [derivedType, setDerivedType] = useState('')
   const [sort, setSort] = useState('last_event_at:desc')
@@ -28,6 +32,9 @@ export function Dashboard() {
     search: debouncedSearch || undefined,
     needs_attention: needsAttention || undefined,
     taken_from_me: takenFromMe || undefined,
+    self_released: selfReleased || undefined,
+    escalated: escalatedByMe || undefined,
+    deescalated: deescalatedByMe || undefined,
     sort,
     page,
     page_size: 25,
@@ -63,6 +70,8 @@ export function Dashboard() {
 
   return (
     <div className="flex flex-col gap-5">
+      <ShiftReminderBanner />
+
       {statusCounts && (statusCounts.closed_today > 0 || statusCounts.reopened_today > 0) && (
         <Card className="bg-green/40 dark:bg-green/20">
           <CardContent className="flex flex-wrap items-center gap-x-6 gap-y-1 py-4 text-sm">
@@ -89,6 +98,9 @@ export function Dashboard() {
           active={activeChip}
           needsAttentionActive={needsAttention}
           takenFromMeActive={takenFromMe}
+          selfReleasedActive={selfReleased}
+          escalatedByMeActive={escalatedByMe}
+          deescalatedByMeActive={deescalatedByMe}
           onSelect={(key, filter) => {
             setActiveChip(key)
             setChipFilter(filter)
@@ -100,6 +112,18 @@ export function Dashboard() {
           }}
           onToggleTakenFromMe={() => {
             setTakenFromMe((v) => !v)
+            setPage(1)
+          }}
+          onToggleSelfReleased={() => {
+            setSelfReleased((v) => !v)
+            setPage(1)
+          }}
+          onToggleEscalatedByMe={() => {
+            setEscalatedByMe((v) => !v)
+            setPage(1)
+          }}
+          onToggleDeescalatedByMe={() => {
+            setDeescalatedByMe((v) => !v)
             setPage(1)
           }}
         />

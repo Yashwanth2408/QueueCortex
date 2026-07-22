@@ -1,12 +1,16 @@
-import { useState } from 'react'
-import { AlertTriangle, ChevronDown, ExternalLink } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
+import { AlertTriangle, ChevronDown, ExternalLink, Loader2, Search, Upload } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { Card } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useToast } from '@/components/ui/toast'
 import { TicketHistoryPanel } from '@/components/tickets/TicketHistoryPanel'
-import { useRosterOverdueTickets, useRosterTicketDetail } from '@/hooks/useRoster'
+import { useRosterAgents, useRosterOverdueTickets, useRosterTicketDetail, useUploadRoster } from '@/hooks/useRoster'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { absoluteTime, relativeTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { RosterOverdueTicket, ShiftReason } from '@/types'
@@ -80,7 +84,7 @@ function ShiftWatchRow({ ticket, expanded, onToggle }: { ticket: RosterOverdueTi
         <TableRow className="hover:bg-transparent">
           <TableCell colSpan={COLUMNS.length} className="p-0">
             <div className="mx-2 my-2 rounded-xl bg-muted/50 dark:bg-muted/30">
-              <TicketHistoryPanel ticketId={ticket.id} detail={detail} isLoading={isLoading} />
+              <TicketHistoryPanel ticketId={ticket.id} detail={detail} isLoading={isLoading} noteLabel="Last internal note (Trinity)" />
             </div>
           </TableCell>
         </TableRow>
@@ -103,45 +107,150 @@ function SkeletonRows() {
   )
 }
 
+function RosterUpload({ compact }: { compact?: boolean }) {
+  const uploadRoster = useUploadRoster()
+  const toast = useToast()
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    uploadRoster.mutate(file, {
+      onSuccess: (result) => {
+        toast({
+          title: 'Roster uploaded',
+          description: `${result.agents} agents, ${result.shift_rows} shift rows (${result.date_range[0] ?? '?'} – ${result.date_range[1] ?? '?'})`,
+          variant: 'success',
+        })
+      },
+      onError: (err) => {
+        toast({ title: 'Upload failed', description: err instanceof Error ? err.message : undefined, variant: 'error' })
+      },
+    })
+  }
+
+  return (
+    <div className="flex items-center gap-3">
+      <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileChange} />
+      <Button onClick={() => fileInputRef.current?.click()} disabled={uploadRoster.isPending} size={compact ? 'sm' : 'default'}>
+        {uploadRoster.isPending ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+        {compact ? 'Update roster' : 'Upload roster CSV'}
+      </Button>
+    </div>
+  )
+}
+
 export function ShiftWatch() {
   const { data: tickets, isLoading } = useRosterOverdueTickets()
+  const { data: agents } = useRosterAgents()
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const debouncedSearch = useDebouncedValue(search, 200)
+
+  const filteredTickets = useMemo(() => {
+    if (!tickets) return []
+    const q = debouncedSearch.trim().toLowerCase()
+    if (!q) return tickets
+    return tickets.filter((t) => t.agent_name.toLowerCase().includes(q) || String(t.num).includes(q))
+  }, [tickets, debouncedSearch])
+
+  const hasRoster = agents && agents.length > 0
 
   return (
     <div className="flex flex-col gap-5">
-      <div>
-        <h1 className="text-[28px] font-bold tracking-[-0.015em]">Shift Watch</h1>
-        <p className="text-sm text-muted-foreground">
-          Tickets held by an L2 agent who's currently off-shift — ended, not started yet today, or off/on leave.
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-[28px] font-bold tracking-[-0.015em]">Shift Watch</h1>
+          <p className="text-sm text-muted-foreground">
+            Tickets held by an L2 agent who's currently off-shift — ended, not started yet today, or off/on leave.
+          </p>
+        </div>
+        {hasRoster && <RosterUpload compact />}
       </div>
 
-      <Card className="overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow className="hover:bg-transparent">
-              {COLUMNS.map((c) => (
-                <TableHead key={c}>{c}</TableHead>
-              ))}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <SkeletonRows />
-            ) : tickets && tickets.length > 0 ? (
-              tickets.map((t) => (
-                <ShiftWatchRow key={t.id} ticket={t} expanded={expandedId === t.id} onToggle={() => setExpandedId(expandedId === t.id ? null : t.id)} />
-              ))
-            ) : (
-              <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={COLUMNS.length} className="py-8 text-center text-sm text-muted-foreground">
-                  Nothing off-shift right now. Upload or update the roster in Settings if this looks stale.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </Card>
+      {!hasRoster ? (
+        <Card>
+          <CardContent className="flex flex-col items-center gap-4 py-14 text-center">
+            <div>
+              <p className="text-base font-semibold">Add your team's roster to get started</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Upload the shift-roster CSV (agent, role, and per-day shift codes) to see who's holding tickets while off-shift.
+              </p>
+            </div>
+            <RosterUpload />
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          <div className="relative w-full max-w-xs">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search agent or ticket #"
+              className="rounded-full pl-9"
+            />
+          </div>
+
+          <Card className="overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  {COLUMNS.map((c) => (
+                    <TableHead key={c}>{c}</TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {isLoading ? (
+                  <SkeletonRows />
+                ) : filteredTickets.length > 0 ? (
+                  filteredTickets.map((t) => (
+                    <ShiftWatchRow key={t.id} ticket={t} expanded={expandedId === t.id} onToggle={() => setExpandedId(expandedId === t.id ? null : t.id)} />
+                  ))
+                ) : (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={COLUMNS.length} className="py-8 text-center text-sm text-muted-foreground">
+                      {debouncedSearch ? 'No matches for that search.' : 'Nothing off-shift right now.'}
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">Roster</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-hidden rounded-lg border border-border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Agent</TableHead>
+                      <TableHead>Role</TableHead>
+                      <TableHead>Today</TableHead>
+                      <TableHead>Tomorrow</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {agents.map((a) => (
+                      <TableRow key={a.email}>
+                        <TableCell>{a.name}</TableCell>
+                        <TableCell className="text-muted-foreground">{a.role}</TableCell>
+                        <TableCell className="font-tabular">{a.today_shift_code ?? '—'}</TableCell>
+                        <TableCell className="font-tabular">{a.tomorrow_shift_code ?? '—'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      )}
     </div>
   )
 }

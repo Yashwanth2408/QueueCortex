@@ -8,7 +8,7 @@ casing anywhere downstream.
 
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +19,7 @@ from app.models import (
     AssignmentEvent,
     Customer,
     CsatEvent,
+    LevelTransition,
     LocalNote,
     StatusTransition,
     SyncRun,
@@ -273,6 +274,40 @@ async def _insert_events(session: AsyncSession, ticket: Ticket, events: list[dic
     return inserted
 
 
+NEARBY_NOTE_WINDOW_MINUTES = 10
+
+
+async def _find_nearby_internal_note(
+    session: AsyncSession, ticket_id: str, author_email: str | None, around: datetime
+) -> str | None:
+    """Best-effort only: Trinity's level_changed/unassigned audit events carry
+    no reason field of their own (confirmed against real synced data), so
+    this looks for an internal note the same author posted shortly before
+    the event - never asserted as fact, always shown to the user as a guess.
+    Only looks backward in time (the natural sequence is explain-then-act,
+    and this also avoids referencing a later event not yet inserted mid-batch
+    during ingestion, since events are derived in the same order they're
+    inserted)."""
+    if not author_email:
+        return None
+    window_start = around - timedelta(minutes=NEARBY_NOTE_WINDOW_MINUTES)
+    row = (
+        await session.execute(
+            select(TicketEvent)
+            .where(
+                TicketEvent.ticket_id == ticket_id,
+                TicketEvent.type == "note",
+                TicketEvent.visibility == "internal",
+                TicketEvent.author_email == author_email,
+                TicketEvent.created_at.between(window_start, around),
+            )
+            .order_by(TicketEvent.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return row.body if row else None
+
+
 async def _derive_from_event(session: AsyncSession, ticket: Ticket, event: TicketEvent, settings: Settings) -> None:
     if event.type == "audit" and event.action == "status_changed":
         is_close = event.new_value in CLOSED_STATUSES
@@ -307,12 +342,24 @@ async def _derive_from_event(session: AsyncSession, ticket: Ticket, event: Ticke
             and (event.action == "unassigned" or new_assignee != settings.tracked_agent_email)
             and event.author_email != settings.tracked_agent_email
         )
+        # The mirror image of is_taken: the tracked agent releasing their OWN
+        # ticket themselves - previously just excluded from is_taken with no
+        # positive record of its own; now tracked explicitly so it shows up
+        # as "you unassigned yourself" rather than being invisible.
+        is_self_release = (
+            old_assignee == settings.tracked_agent_email
+            and event.author_email == settings.tracked_agent_email
+            and (event.action == "unassigned" or new_assignee != settings.tracked_agent_email)
+        )
         # Trinity records the actor as whichever party's own action caused the
         # change (the agent giving it up, or the agent taking it) - it is
         # "System"/no email specifically when Trinity itself auto-unassigns
         # (e.g. reopened while the assignee is offline), which is exactly the
         # "system unassigned me" signal, distinct from a person taking it.
         is_system = event.author_email is None and (event.author is None or event.author == "System")
+        reason = meta.get("reason")
+        if is_self_release and not reason:
+            reason = await _find_nearby_internal_note(session, ticket.id, event.author_email, event.created_at)
         session.add(
             AssignmentEvent(
                 ticket_id=ticket.id,
@@ -324,8 +371,9 @@ async def _derive_from_event(session: AsyncSession, ticket: Ticket, event: Ticke
                 new_assignee=new_assignee,
                 is_gain_for_tracked_agent=is_gain,
                 is_taken_from_tracked_agent=is_taken,
+                is_self_release_for_tracked_agent=is_self_release,
                 is_system_action=is_system,
-                reason=meta.get("reason"),
+                reason=reason,
                 performed_by_email=event.author_email,
                 event_date=to_reporting_date(event.created_at, settings.reporting_timezone),
                 created_at=event.created_at,
@@ -333,6 +381,37 @@ async def _derive_from_event(session: AsyncSession, ticket: Ticket, event: Ticke
         )
         if is_gain and (ticket.first_assigned_to_agent_at is None or event.created_at < ticket.first_assigned_to_agent_at):
             ticket.first_assigned_to_agent_at = event.created_at
+
+    elif event.type == "audit" and event.action == "level_changed":
+        # Only real transitions AWAY FROM L2 count - not the ticket's initial
+        # level classification (old_value is None the first time Trinity
+        # assigns a level at all, confirmed against real data: ~130 of these
+        # exist and are not "de-escalations"), and not an L1/L3 ticket moving
+        # INTO L2 (that's a gain, not something escalated/de-escalated away
+        # from the tracked agent).
+        is_escalation = event.old_value == "L2" and event.new_value == "L3"
+        is_deescalation = event.old_value == "L2" and event.new_value == "L1"
+        is_system = event.author_email is None and (event.author is None or event.author == "System")
+        possible_reason = None
+        if not is_system:
+            possible_reason = await _find_nearby_internal_note(session, ticket.id, event.author_email, event.created_at)
+        session.add(
+            LevelTransition(
+                ticket_id=ticket.id,
+                ticket_num=ticket.num,
+                event_id=event.id,
+                seq=event.seq,
+                old_level=event.old_value,
+                new_level=event.new_value,
+                is_escalation=is_escalation,
+                is_deescalation=is_deescalation,
+                is_system_action=is_system,
+                performed_by_email=event.author_email,
+                possible_reason=possible_reason,
+                event_date=to_reporting_date(event.created_at, settings.reporting_timezone),
+                created_at=event.created_at,
+            )
+        )
 
     elif event.type == "audit" and event.action in ("csat_sent", "csat_cancelled"):
         meta = event.event_metadata or {}
@@ -687,6 +766,54 @@ async def backfill_assignment_events(session: AsyncSession, settings: Settings) 
         created += 1
     await session.commit()
     return created
+
+
+async def backfill_level_events(session: AsyncSession, settings: Settings) -> int:
+    """One-off migration helper: derive level_transitions for level_changed
+    audit events that were already ingested into ticket_events before this
+    feature existed."""
+    rows = (await session.execute(select(TicketEvent).where(TicketEvent.action == "level_changed"))).scalars().all()
+    existing_event_ids = set((await session.execute(select(LevelTransition.event_id))).scalars().all())
+    created = 0
+    for event in rows:
+        if event.id in existing_event_ids:
+            continue
+        ticket = await session.get(Ticket, event.ticket_id)
+        if ticket is None:
+            continue
+        await _derive_from_event(session, ticket, event, settings)
+        created += 1
+    await session.commit()
+    return created
+
+
+async def backfill_self_release_flags(session: AsyncSession, settings: Settings) -> int:
+    """One-off migration helper: is_self_release_for_tracked_agent didn't
+    exist before this feature - backfill it on already-derived
+    assignment_events rows using the same condition as _derive_from_event,
+    from data already stored (can't just re-derive, that would duplicate
+    the existing rows)."""
+    rows = (
+        await session.execute(
+            select(AssignmentEvent).where(
+                AssignmentEvent.old_assignee == settings.tracked_agent_email,
+                AssignmentEvent.is_self_release_for_tracked_agent.is_(False),
+            )
+        )
+    ).scalars().all()
+    updated = 0
+    for r in rows:
+        is_self_release = r.performed_by_email == settings.tracked_agent_email and (
+            r.action == "unassigned" or r.new_assignee != settings.tracked_agent_email
+        )
+        if not is_self_release:
+            continue
+        r.is_self_release_for_tracked_agent = True
+        if not r.reason:
+            r.reason = await _find_nearby_internal_note(session, r.ticket_id, r.performed_by_email, r.created_at)
+        updated += 1
+    await session.commit()
+    return updated
 
 
 async def get_last_own_internal_note(session: AsyncSession, ticket_id: str, agent_email: str) -> str | None:

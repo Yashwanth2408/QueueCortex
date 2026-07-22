@@ -5,19 +5,21 @@ import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { useAddComment, useDeleteComment } from '@/hooks/useTickets'
 import { absoluteTime, relativeTime } from '@/lib/format'
-import type { AssignmentEventOut, StatusTransition, CsatEventOut, TicketDetail } from '@/types'
+import type { AssignmentEventOut, LevelTransitionOut, StatusTransition, CsatEventOut, TicketDetail } from '@/types'
 
 type TimelineEntry = {
   created_at: string
   label: string
-  tone: 'default' | 'reopen' | 'close' | 'muted' | 'taken'
+  tone: 'default' | 'reopen' | 'close' | 'muted' | 'taken' | 'release' | 'escalate' | 'deescalate'
   indent?: boolean
+  possibleReason?: string | null
 }
 
 function buildTimeline(
   transitions: StatusTransition[],
   csats: CsatEventOut[],
   assignmentEvents: AssignmentEventOut[],
+  levelTransitions: LevelTransitionOut[],
 ): TimelineEntry[] {
   const entries: TimelineEntry[] = []
   let gainCount = 0
@@ -39,6 +41,13 @@ function buildTimeline(
         label = `Unassigned — by ${a.performed_by_email ?? 'someone'}`
       }
       entries.push({ created_at: a.created_at, label, tone: 'taken' })
+    } else if (a.is_self_release_for_tracked_agent) {
+      entries.push({
+        created_at: a.created_at,
+        label: 'You unassigned yourself',
+        tone: 'release',
+        possibleReason: a.reason,
+      })
     }
   }
   for (const t of transitions) {
@@ -52,6 +61,13 @@ function buildTimeline(
       entries.push({ created_at: t.created_at, label: `Closed (${t.new_status})`, tone: 'close' })
     } else {
       entries.push({ created_at: t.created_at, label: `${t.old_status ?? '—'} → ${t.new_status}`, tone: 'default' })
+    }
+  }
+  for (const l of levelTransitions) {
+    if (l.is_escalation) {
+      entries.push({ created_at: l.created_at, label: 'Escalated to L3', tone: 'escalate', possibleReason: l.possible_reason })
+    } else if (l.is_deescalation) {
+      entries.push({ created_at: l.created_at, label: 'De-escalated to L1', tone: 'deescalate', possibleReason: l.possible_reason })
     }
   }
   for (const c of csats) {
@@ -71,15 +87,19 @@ const DOT_CLASS: Record<TimelineEntry['tone'], string> = {
   close: 'bg-green-foreground',
   muted: 'bg-muted-foreground/50',
   taken: 'bg-destructive',
+  release: 'bg-amber-foreground',
+  escalate: 'bg-destructive',
+  deescalate: 'bg-amber-foreground',
 }
 
 interface Props {
   ticketId: string
   detail: TicketDetail | undefined
   isLoading: boolean
+  noteLabel?: string
 }
 
-export function TicketHistoryPanel({ ticketId, detail, isLoading }: Props) {
+export function TicketHistoryPanel({ ticketId, detail, isLoading, noteLabel = 'Your last internal note (Trinity)' }: Props) {
   const [showAll, setShowAll] = useState(false)
   const [draft, setDraft] = useState('')
   const addComment = useAddComment(ticketId)
@@ -93,13 +113,25 @@ export function TicketHistoryPanel({ ticketId, detail, isLoading }: Props) {
     )
   }
 
-  const timeline = buildTimeline(detail.status_transitions, detail.csat_events, detail.assignment_events)
+  const timeline = buildTimeline(detail.status_transitions, detail.csat_events, detail.assignment_events, detail.level_transitions)
   const TRUNCATE_AT = 8
   const visible = showAll || timeline.length <= TRUNCATE_AT ? timeline : timeline.slice(-TRUNCATE_AT)
   const hiddenCount = timeline.length - visible.length
 
   return (
     <div className="grid grid-cols-1 gap-6 px-5 py-5 md:grid-cols-2">
+      {detail.tags_cache && detail.tags_cache.length > 0 && (
+        <div className="md:col-span-2">
+          <h4 className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">Tags</h4>
+          <div className="flex flex-wrap gap-1.5">
+            {detail.tags_cache.map((tag) => (
+              <Badge key={tag} variant="secondary">
+                {tag}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
       <div>
         <h4 className="mb-3 text-xs font-semibold tracking-wide text-muted-foreground uppercase">Open/close history</h4>
         {hiddenCount > 0 && (
@@ -117,6 +149,15 @@ export function TicketHistoryPanel({ ticketId, detail, isLoading }: Props) {
                   {absoluteTime(e.created_at)}
                 </span>
               </div>
+              {e.possibleReason && (
+                <p
+                  className="mt-0.5 text-xs text-muted-foreground italic [&_p]:m-0"
+                  title="Best-effort guess: nearest internal note from the same person — not confirmed as the actual reason"
+                >
+                  <span className="not-italic">possible reason:</span>{' '}
+                  <span dangerouslySetInnerHTML={{ __html: e.possibleReason }} />
+                </p>
+              )}
             </li>
           ))}
         </ol>
@@ -139,7 +180,7 @@ export function TicketHistoryPanel({ ticketId, detail, isLoading }: Props) {
       <div className="flex flex-col gap-4">
         <div>
           <h4 className="mb-2 flex items-center gap-1.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-            <MessageSquareQuote className="size-3.5" /> Your last internal note (Trinity)
+            <MessageSquareQuote className="size-3.5" /> {noteLabel}
           </h4>
           {detail.last_trinity_internal_note ? (
             <div
@@ -147,7 +188,9 @@ export function TicketHistoryPanel({ ticketId, detail, isLoading }: Props) {
               dangerouslySetInnerHTML={{ __html: detail.last_trinity_internal_note }}
             />
           ) : (
-            <p className="text-sm text-muted-foreground">No internal note from you yet.</p>
+            <p className="text-sm text-muted-foreground">
+              {noteLabel.startsWith('Your') ? 'No internal note from you yet.' : 'No internal note yet.'}
+            </p>
           )}
         </div>
 

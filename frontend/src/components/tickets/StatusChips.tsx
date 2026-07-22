@@ -1,4 +1,4 @@
-import { AlertTriangle, UserX } from 'lucide-react'
+import { AlertTriangle, ArrowDownRight, ArrowUpRight, LogOut, UserX } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useStatusCounts } from '@/hooks/useTickets'
 
@@ -25,18 +25,30 @@ interface Props {
   active: ChipKey | null
   needsAttentionActive: boolean
   takenFromMeActive: boolean
+  selfReleasedActive: boolean
+  escalatedByMeActive: boolean
+  deescalatedByMeActive: boolean
   onSelect: (key: ChipKey | null, filter: ChipFilter | null) => void
   onToggleNeedsAttention: () => void
   onToggleTakenFromMe: () => void
+  onToggleSelfReleased: () => void
+  onToggleEscalatedByMe: () => void
+  onToggleDeescalatedByMe: () => void
 }
 
 export function StatusChips({
   active,
   needsAttentionActive,
   takenFromMeActive,
+  selfReleasedActive,
+  escalatedByMeActive,
+  deescalatedByMeActive,
   onSelect,
   onToggleNeedsAttention,
   onToggleTakenFromMe,
+  onToggleSelfReleased,
+  onToggleEscalatedByMe,
+  onToggleDeescalatedByMe,
 }: Props) {
   const { data: counts } = useStatusCounts()
 
@@ -78,6 +90,39 @@ export function StatusChips({
       >
         <UserX className="size-3.5" />
         Taken from me <span className="font-tabular opacity-70">{counts?.taken_from_me ?? 0}</span>
+      </button>
+      <button
+        onClick={onToggleSelfReleased}
+        title="Tickets you unassigned yourself from"
+        className={cn(
+          'inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium transition-colors duration-100',
+          selfReleasedActive ? 'bg-secondary text-foreground font-semibold' : 'text-muted-foreground hover:bg-secondary',
+        )}
+      >
+        <LogOut className="size-3.5" />
+        Self-released <span className="font-tabular opacity-70">{counts?.self_released ?? 0}</span>
+      </button>
+      <button
+        onClick={onToggleEscalatedByMe}
+        title="Tickets escalated from L2 to L3 while in your history"
+        className={cn(
+          'inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium transition-colors duration-100',
+          escalatedByMeActive ? 'bg-red text-destructive font-semibold' : 'text-destructive/80 hover:bg-red/60',
+        )}
+      >
+        <ArrowUpRight className="size-3.5" />
+        Escalated <span className="font-tabular opacity-70">{counts?.escalated_count ?? 0}</span>
+      </button>
+      <button
+        onClick={onToggleDeescalatedByMe}
+        title="Tickets de-escalated from L2 to L1 while in your history"
+        className={cn(
+          'inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium transition-colors duration-100',
+          deescalatedByMeActive ? 'bg-amber text-amber-foreground font-semibold' : 'text-amber-foreground/80 hover:bg-amber/50',
+        )}
+      >
+        <ArrowDownRight className="size-3.5" />
+        De-escalated <span className="font-tabular opacity-70">{counts?.deescalated_count ?? 0}</span>
       </button>
     </div>
   )

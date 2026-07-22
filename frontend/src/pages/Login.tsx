@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label'
 import { OtpInput } from '@/components/auth/OtpInput'
 import { useAuth } from '@/context/AuthContext'
 import { ApiError, request } from '@/lib/api'
+import logo from '@/assets/Gemini_Generated_Image_zbvogszbvogszbvo_bgremoved.png'
 
 type Step = 'email' | 'otp'
 
@@ -76,7 +77,9 @@ export function Login() {
           transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
           className="mb-8 flex flex-col items-center gap-2.5 text-center"
         >
-          <div className="flex size-11 items-center justify-center rounded-2xl bg-foreground text-lg font-bold text-background">Q</div>
+          <div className="flex size-11 items-center justify-center rounded-2xl bg-foreground p-2">
+            <img src={logo} alt="" className="size-full object-contain dark:invert" />
+          </div>
           <h1 className="text-[28px] font-bold tracking-[-0.02em]">QueueCortex</h1>
           <p className="text-sm text-muted-foreground">Sign in to your ticket dashboard</p>
         </motion.div>

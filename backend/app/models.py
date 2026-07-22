@@ -225,9 +225,41 @@ class AssignmentEvent(Base):
     new_assignee: Mapped[str | None] = mapped_column(String)
     is_gain_for_tracked_agent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_taken_from_tracked_agent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_self_release_for_tracked_agent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_system_action: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     reason: Mapped[str | None] = mapped_column(String)
     performed_by_email: Mapped[str | None] = mapped_column(String)
+    event_date: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class LevelTransition(Base):
+    """Escalation (->L3) / de-escalation (->L1) tracking, mirroring
+    StatusTransition's shape. `possible_reason` is best-effort only: Trinity's
+    `level_changed` audit events carry no reason field of their own (confirmed
+    against real data - most are fully automated with no note anywhere nearby),
+    so this is whichever internal note the same author posted closest in time,
+    if any - always shown to the user as a guess, never asserted as fact."""
+
+    __tablename__ = "level_transitions"
+    __table_args__ = (
+        Index("idx_lt_ticket", "ticket_id", "seq"),
+        Index("idx_lt_escalation_date", "is_escalation", "event_date"),
+        Index("idx_lt_deescalation_date", "is_deescalation", "event_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ticket_id: Mapped[str] = mapped_column(String, ForeignKey("tickets.id"), nullable=False)
+    ticket_num: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_id: Mapped[str] = mapped_column(String, ForeignKey("ticket_events.id"), unique=True, nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    old_level: Mapped[str | None] = mapped_column(String)
+    new_level: Mapped[str | None] = mapped_column(String)
+    is_escalation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_deescalation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_system_action: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    performed_by_email: Mapped[str | None] = mapped_column(String)
+    possible_reason: Mapped[str | None] = mapped_column(Text)
     event_date: Mapped[date] = mapped_column(Date, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 

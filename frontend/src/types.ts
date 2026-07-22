@@ -30,6 +30,14 @@ export interface TicketListItem {
   taken_from_me_count: number
   last_taken_from_me_at: string | null
   last_taken_from_me_reason: string | null
+  self_released_count: number
+  last_self_released_at: string | null
+  last_self_released_reason: string | null
+  escalated_count: number
+  last_escalated_at: string | null
+  deescalated_count: number
+  last_deescalated_at: string | null
+  last_level_change_reason: string | null
 }
 
 export interface TicketListResponse {
@@ -60,9 +68,24 @@ export interface AssignmentEventOut {
   new_assignee: string | null
   is_gain_for_tracked_agent: boolean
   is_taken_from_tracked_agent: boolean
+  is_self_release_for_tracked_agent: boolean
   is_system_action: boolean
   reason: string | null
   performed_by_email: string | null
+  event_date: string
+  created_at: string
+}
+
+export interface LevelTransitionOut {
+  id: number
+  seq: number
+  old_level: string | null
+  new_level: string | null
+  is_escalation: boolean
+  is_deescalation: boolean
+  is_system_action: boolean
+  performed_by_email: string | null
+  possible_reason: string | null
   event_date: string
   created_at: string
 }
@@ -92,7 +115,21 @@ export interface LocalNote {
 export interface TicketDetail
   extends Omit<
     TicketListItem,
-    'reopen_count' | 'last_close_at' | 'last_reopen_at' | 'needs_attention' | 'taken_from_me_count' | 'last_taken_from_me_at' | 'last_taken_from_me_reason'
+    | 'reopen_count'
+    | 'last_close_at'
+    | 'last_reopen_at'
+    | 'needs_attention'
+    | 'taken_from_me_count'
+    | 'last_taken_from_me_at'
+    | 'last_taken_from_me_reason'
+    | 'self_released_count'
+    | 'last_self_released_at'
+    | 'last_self_released_reason'
+    | 'escalated_count'
+    | 'last_escalated_at'
+    | 'deescalated_count'
+    | 'last_deescalated_at'
+    | 'last_level_change_reason'
   > {
   channel: string | null
   source: string | null
@@ -106,6 +143,7 @@ export interface TicketDetail
   added_to_tracker_at: string
   status_transitions: StatusTransition[]
   assignment_events: AssignmentEventOut[]
+  level_transitions: LevelTransitionOut[]
   csat_events: CsatEventOut[]
   duplicates: TicketDuplicateOut[]
   last_trinity_internal_note: string | null
@@ -175,6 +213,13 @@ export interface RosterAgentOut {
   role: string
   today_shift_code: string | null
   tomorrow_shift_code: string | null
+}
+
+export interface MyShift {
+  shift_code: string | null
+  valid_from: string | null
+  valid_to: string | null
+  day_off: string | null
 }
 
 export type ShiftReason = 'on_shift' | 'shift_ended' | 'off_day' | 'before_shift_start' | 'no_data'

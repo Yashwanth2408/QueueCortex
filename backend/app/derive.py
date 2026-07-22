@@ -8,11 +8,11 @@ local heuristic)."""
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.models import AssignmentEvent, StatusTransition, Ticket, TicketEvent
+from app.models import AssignmentEvent, LevelTransition, StatusTransition, Ticket, TicketEvent
 from app.settings_store import get_value
 from app.sync.timeutil import to_reporting_date, utcnow
 
@@ -40,7 +40,8 @@ async def compute_assignment_flags(session: AsyncSession, ticket_ids: list[str])
     """'Taken from me' = an assignment_events row where the tracked agent lost
     the ticket to something other than their own action - either Trinity
     auto-unassigning them (is_system_action) or another person taking/being
-    given the ticket. Self-releases are excluded at derivation time."""
+    given the ticket. Self-releases are tracked separately, see
+    compute_self_release_flags - not "taken", something the agent chose to do."""
     if not ticket_ids:
         return {}
     rows = (
@@ -63,6 +64,68 @@ async def compute_assignment_flags(session: AsyncSession, ticket_ids: list[str])
             entry["last_taken_from_me_reason"] = f"reassigned to {r.new_assignee}"
         else:
             entry["last_taken_from_me_reason"] = f"unassigned by {r.performed_by_email or 'someone'}"
+    return out
+
+
+async def compute_self_release_flags(session: AsyncSession, ticket_ids: list[str]) -> dict[str, dict]:
+    """Tickets the tracked agent unassigned themselves from (deliberate
+    hand-off), as opposed to having it taken from them - see
+    compute_assignment_flags. `reason` is best-effort: Trinity metadata if
+    present, else a nearby internal note found at derivation time, else None."""
+    if not ticket_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(AssignmentEvent)
+            .where(AssignmentEvent.ticket_id.in_(ticket_ids), AssignmentEvent.is_self_release_for_tracked_agent.is_(True))
+            .order_by(AssignmentEvent.seq)
+        )
+    ).scalars().all()
+    out: dict[str, dict] = {
+        tid: {"self_released_count": 0, "last_self_released_at": None, "last_self_released_reason": None} for tid in ticket_ids
+    }
+    for r in rows:
+        entry = out[r.ticket_id]
+        entry["self_released_count"] += 1
+        entry["last_self_released_at"] = r.created_at
+        entry["last_self_released_reason"] = r.reason
+    return out
+
+
+async def compute_level_flags(session: AsyncSession, ticket_ids: list[str]) -> dict[str, dict]:
+    """Escalation (->L3) / de-escalation (->L1) tracking for tickets the
+    tracked agent has held. `possible_reason` is a best-effort guess (a
+    nearby internal note by the same author, if any was found at derivation
+    time) - Trinity's level_changed events have no reason field of their own."""
+    if not ticket_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(LevelTransition)
+            .where(LevelTransition.ticket_id.in_(ticket_ids), or_(LevelTransition.is_escalation.is_(True), LevelTransition.is_deescalation.is_(True)))
+            .order_by(LevelTransition.seq)
+        )
+    ).scalars().all()
+    out: dict[str, dict] = {
+        tid: {
+            "escalated_count": 0,
+            "deescalated_count": 0,
+            "last_escalated_at": None,
+            "last_deescalated_at": None,
+            "last_level_change_reason": None,
+        }
+        for tid in ticket_ids
+    }
+    for r in rows:
+        entry = out[r.ticket_id]
+        if r.is_escalation:
+            entry["escalated_count"] += 1
+            entry["last_escalated_at"] = r.created_at
+            entry["last_level_change_reason"] = r.possible_reason
+        elif r.is_deescalation:
+            entry["deescalated_count"] += 1
+            entry["last_deescalated_at"] = r.created_at
+            entry["last_level_change_reason"] = r.possible_reason
     return out
 
 

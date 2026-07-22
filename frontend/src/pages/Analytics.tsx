@@ -5,8 +5,10 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAnalyticsSummary } from '@/hooks/useAnalytics'
 import { useTickets } from '@/hooks/useTickets'
+import { useSettings } from '@/hooks/useSettings'
 import { useDarkMode } from '@/context/DarkModeContext'
 import { formatMinutes } from '@/lib/format'
+import type { AnalyticsSummaryBucket, MyShift } from '@/types'
 
 type Period = 'day' | 'month' | 'year'
 
@@ -50,21 +52,105 @@ function ChartCardSkeleton({ height }: { height: number }) {
   return <Skeleton className="w-full rounded-lg" style={{ height }} />
 }
 
-function computeStreak(buckets: { bucket: string; closed_count: number }[]): number {
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+/** bucket dates are plain "YYYY-MM-DD" strings - parse via local components,
+ * not `new Date(str)`, which parses bare dates as UTC midnight and can shift
+ * a day off in either direction depending on the viewer's timezone offset. */
+function parseLocalDate(dateStr: string): Date {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
+function isDayOff(dateStr: string, myShift: MyShift | undefined): boolean {
+  if (!myShift?.day_off) return false
+  const date = parseLocalDate(dateStr)
+  if (myShift.valid_from && date < parseLocalDate(myShift.valid_from)) return false
+  if (myShift.valid_to && date > parseLocalDate(myShift.valid_to)) return false
+  return WEEKDAY_NAMES[date.getDay()] === myShift.day_off
+}
+
+/** Walks backward from most recent; a day off is skipped (doesn't break or
+ * extend the streak), since it was never expected to have a close. */
+function computeStreak(buckets: { bucket: string; closed_count: number }[], myShift?: MyShift): number {
   let streak = 0
   for (let i = buckets.length - 1; i >= 0; i--) {
     if (buckets[i].closed_count > 0) streak++
+    else if (isDayOff(buckets[i].bucket, myShift)) continue
     else break
   }
   return streak
+}
+
+function computeBestStreak(buckets: { bucket: string; closed_count: number }[], myShift?: MyShift): number {
+  let best = 0
+  let current = 0
+  for (const b of buckets) {
+    if (b.closed_count > 0) {
+      current++
+      best = Math.max(best, current)
+    } else if (!isDayOff(b.bucket, myShift)) {
+      current = 0
+    }
+  }
+  return best
+}
+
+function streakFlair(streak: number): string {
+  if (streak >= 14) return '🏆'
+  if (streak >= 7) return '⚡'
+  if (streak >= 3) return '🔥'
+  return ''
+}
+
+const GOOD_DAY_MESSAGES = [
+  'Nice work today — keep the momentum going.',
+  'Solid pace today. Your queue is feeling it.',
+  "You're on a roll today — nicely done.",
+]
+const SLOW_DAY_MESSAGES = [
+  "Quiet day so far — that's alright, tomorrow's a fresh start.",
+  'Every ticket counts, even the tricky ones. Keep going.',
+  "Not every day is a sprint. You've got this.",
+]
+const STREAK_MESSAGES = [
+  "consecutive days closing tickets — that's real consistency.",
+  "days in a row. Don't stop now!",
+  'days running. Impressive discipline.',
+]
+
+function dayOfYear(): number {
+  const now = new Date()
+  const start = new Date(now.getFullYear(), 0, 0)
+  return Math.floor((now.getTime() - start.getTime()) / 86_400_000)
+}
+
+function motivationalLine(streak: number, closedToday: number): string {
+  const seed = dayOfYear()
+  if (streak >= 7) return `${streak} ${STREAK_MESSAGES[seed % STREAK_MESSAGES.length]}`
+  if (closedToday > 0) return GOOD_DAY_MESSAGES[seed % GOOD_DAY_MESSAGES.length]
+  return SLOW_DAY_MESSAGES[seed % SLOW_DAY_MESSAGES.length]
+}
+
+function weekOverWeek(buckets: AnalyticsSummaryBucket[]): { thisWeek: number; lastWeek: number } | null {
+  if (buckets.length < 8) return null
+  const last7 = buckets.slice(-7)
+  const prev7 = buckets.slice(-14, -7)
+  if (prev7.length === 0) return null
+  return {
+    thisWeek: last7.reduce((s, b) => s + b.closed_count, 0),
+    lastWeek: prev7.reduce((s, b) => s + b.closed_count, 0),
+  }
 }
 
 export function Analytics() {
   const [period, setPeriod] = useState<Period>('day')
   const { data: summary, isLoading } = useAnalyticsSummary(period)
   const { data: allTickets } = useTickets({ page_size: 200, sort: 'num:desc' })
+  const { data: settings } = useSettings()
   const { dark } = useDarkMode()
   const colors = dark ? PALETTE.dark : PALETTE.light
+  const myShift = settings?.find((s) => s.key === 'my_shift_json')?.value as MyShift | undefined
 
   const totals = useMemo(() => {
     if (!summary) return null
@@ -95,7 +181,10 @@ export function Analytics() {
       .sort((a, b) => b.count - a.count)
   }, [allTickets])
 
-  const streak = summary && period === 'day' ? computeStreak(summary) : null
+  const streak = summary && period === 'day' ? computeStreak(summary, myShift) : null
+  const bestStreak = summary && period === 'day' ? computeBestStreak(summary, myShift) : null
+  const wow = summary && period === 'day' ? weekOverWeek(summary) : null
+  const closedToday = summary && period === 'day' && summary.length > 0 ? summary[summary.length - 1].closed_count : 0
   const tickStyle = { fontSize: 11, fill: colors.muted }
 
   return (
@@ -121,9 +210,25 @@ export function Analytics() {
 
       {streak !== null && streak > 0 && (
         <Card>
-          <CardContent className="py-3 text-sm">
-            🔥 Current streak: <span className="font-tabular font-semibold">{streak}</span> consecutive day{streak === 1 ? '' : 's'} with at
-            least one close
+          <CardContent className="flex flex-col gap-2 py-3 text-sm">
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
+              <span>
+                {streakFlair(streak)} Current streak: <span className="font-tabular font-semibold">{streak}</span> consecutive day
+                {streak === 1 ? '' : 's'} with at least one close
+              </span>
+              {bestStreak !== null && bestStreak > streak && (
+                <span className="text-muted-foreground">
+                  Best ever: <span className="font-tabular font-semibold text-foreground">{bestStreak}</span>
+                </span>
+              )}
+              {wow && (
+                <span className="text-muted-foreground">
+                  This week: <span className="font-tabular font-semibold text-foreground">{wow.thisWeek}</span> vs last week{' '}
+                  <span className="font-tabular font-semibold text-foreground">{wow.lastWeek}</span>
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">{motivationalLine(streak, closedToday)}</p>
           </CardContent>
         </Card>
       )}

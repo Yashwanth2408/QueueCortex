@@ -23,7 +23,10 @@ DEFAULT_KEYS = (
     "sla_thresholds_json",
     "roster_bucket_unassigned_id",
     "roster_bucket_assigned_id",
+    "my_shift_json",
 )
+
+DEFAULT_MY_SHIFT = {"shift_code": None, "valid_from": None, "valid_to": None, "day_off": None}
 
 # The two Trinity buckets that define "L2, non-Expo" tickets - Shift Watch's
 # sync trusts these buckets' own rule_tree (status/level/tag filtering)
@@ -42,6 +45,7 @@ async def seed_defaults(session: AsyncSession, settings: Settings) -> None:
         "sla_thresholds_json": {"OPEN": 24, "PENDING": 48},
         "roster_bucket_unassigned_id": DEFAULT_ROSTER_BUCKET_UNASSIGNED_ID,
         "roster_bucket_assigned_id": DEFAULT_ROSTER_BUCKET_ASSIGNED_ID,
+        "my_shift_json": DEFAULT_MY_SHIFT,
     }
     existing = (await session.execute(select(Setting.key))).scalars().all()
     existing_set = set(existing)

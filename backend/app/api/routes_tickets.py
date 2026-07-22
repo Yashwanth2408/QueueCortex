@@ -12,11 +12,13 @@ from app.db import get_session
 from app.derive import (
     compute_actually_closed_today_ids,
     compute_assignment_flags,
+    compute_level_flags,
     compute_needs_attention_ids,
+    compute_self_release_flags,
     compute_ticket_flags,
     compute_today_snapshot,
 )
-from app.models import AssignmentEvent, CsatEvent, LocalNote, StatusTransition, Ticket, TicketDuplicate, TicketTag
+from app.models import AssignmentEvent, CsatEvent, LevelTransition, LocalNote, StatusTransition, Ticket, TicketDuplicate, TicketTag
 from app.schemas import (
     AddTicketRequest,
     LocalNoteCreate,
@@ -70,6 +72,33 @@ async def ticket_status_counts(
         )
     ).scalar_one()
 
+    self_released = (
+        await session.execute(
+            select(func.count(func.distinct(AssignmentEvent.ticket_id)))
+            .select_from(AssignmentEvent)
+            .join(Ticket, Ticket.id == AssignmentEvent.ticket_id)
+            .where(AssignmentEvent.is_self_release_for_tracked_agent.is_(True), Ticket.is_tracked.is_(True))
+        )
+    ).scalar_one()
+
+    escalated_count = (
+        await session.execute(
+            select(func.count(func.distinct(LevelTransition.ticket_id)))
+            .select_from(LevelTransition)
+            .join(Ticket, Ticket.id == LevelTransition.ticket_id)
+            .where(LevelTransition.is_escalation.is_(True), Ticket.is_tracked.is_(True))
+        )
+    ).scalar_one()
+
+    deescalated_count = (
+        await session.execute(
+            select(func.count(func.distinct(LevelTransition.ticket_id)))
+            .select_from(LevelTransition)
+            .join(Ticket, Ticket.id == LevelTransition.ticket_id)
+            .where(LevelTransition.is_deescalation.is_(True), Ticket.is_tracked.is_(True))
+        )
+    ).scalar_one()
+
     return {
         "open": by_status.get("OPEN", 0),
         "pending": by_status.get("PENDING", 0),
@@ -85,6 +114,9 @@ async def ticket_status_counts(
         "customer_reopened_today": today_snapshot["customer_reopened_today"],
         "needs_attention": needs_attention,
         "taken_from_me": taken_from_me,
+        "self_released": self_released,
+        "escalated_count": escalated_count,
+        "deescalated_count": deescalated_count,
     }
 
 
@@ -99,6 +131,9 @@ async def list_tickets(
     needs_attention: bool | None = None,
     closed_today: bool | None = None,
     taken_from_me: bool | None = None,
+    self_released: bool | None = None,
+    escalated: bool | None = None,
+    deescalated: bool | None = None,
     sort: str = "last_event_at:desc",
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=200),
@@ -143,6 +178,34 @@ async def list_tickets(
         )
         stmt = stmt.where(Ticket.id.in_(taken_ids or ["__none__"]))
 
+    if self_released:
+        released_ids = (
+            (
+                await session.execute(
+                    select(AssignmentEvent.ticket_id).where(AssignmentEvent.is_self_release_for_tracked_agent.is_(True)).distinct()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        stmt = stmt.where(Ticket.id.in_(released_ids or ["__none__"]))
+
+    if escalated:
+        escalated_ids = (
+            (await session.execute(select(LevelTransition.ticket_id).where(LevelTransition.is_escalation.is_(True)).distinct()))
+            .scalars()
+            .all()
+        )
+        stmt = stmt.where(Ticket.id.in_(escalated_ids or ["__none__"]))
+
+    if deescalated:
+        deescalated_ids = (
+            (await session.execute(select(LevelTransition.ticket_id).where(LevelTransition.is_deescalation.is_(True)).distinct()))
+            .scalars()
+            .all()
+        )
+        stmt = stmt.where(Ticket.id.in_(deescalated_ids or ["__none__"]))
+
     sort_field, _, sort_dir = sort.partition(":")
     col = SORTABLE.get(sort_field, Ticket.last_event_at)
     stmt = stmt.order_by(col.asc() if sort_dir == "asc" else col.desc())
@@ -153,6 +216,8 @@ async def list_tickets(
 
     flags = await compute_ticket_flags(session, [t.id for t in tickets])
     assignment_flags = await compute_assignment_flags(session, [t.id for t in tickets])
+    self_release_flags = await compute_self_release_flags(session, [t.id for t in tickets])
+    level_flags = await compute_level_flags(session, [t.id for t in tickets])
     na_ids = await compute_needs_attention_ids(session, settings) if not needs_attention else na_ids
 
     items = []
@@ -166,6 +231,8 @@ async def list_tickets(
                 customer = c
         f = flags.get(t.id, {})
         af = assignment_flags.get(t.id, {})
+        sf = self_release_flags.get(t.id, {})
+        lf = level_flags.get(t.id, {})
         items.append(
             TicketListItem(
                 id=t.id,
@@ -189,6 +256,14 @@ async def list_tickets(
                 taken_from_me_count=af.get("taken_from_me_count", 0),
                 last_taken_from_me_at=af.get("last_taken_from_me_at"),
                 last_taken_from_me_reason=af.get("last_taken_from_me_reason"),
+                self_released_count=sf.get("self_released_count", 0),
+                last_self_released_at=sf.get("last_self_released_at"),
+                last_self_released_reason=sf.get("last_self_released_reason"),
+                escalated_count=lf.get("escalated_count", 0),
+                last_escalated_at=lf.get("last_escalated_at"),
+                deescalated_count=lf.get("deescalated_count", 0),
+                last_deescalated_at=lf.get("last_deescalated_at"),
+                last_level_change_reason=lf.get("last_level_change_reason"),
             )
         )
 
@@ -231,6 +306,11 @@ async def load_ticket_detail(session: AsyncSession, ticket_id: str, note_author_
                 select(AssignmentEvent).where(AssignmentEvent.ticket_id == ticket_id).order_by(AssignmentEvent.seq)
             )
         )
+        .scalars()
+        .all()
+    )
+    level_transitions = (
+        (await session.execute(select(LevelTransition).where(LevelTransition.ticket_id == ticket_id).order_by(LevelTransition.seq)))
         .scalars()
         .all()
     )
@@ -279,6 +359,7 @@ async def load_ticket_detail(session: AsyncSession, ticket_id: str, note_author_
         trinity_url=ticket.trinity_url,
         status_transitions=transitions,
         assignment_events=assignment_events,
+        level_transitions=level_transitions,
         csat_events=csats,
         duplicates=duplicates,
         last_trinity_internal_note=last_note,

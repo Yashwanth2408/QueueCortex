@@ -1,15 +1,134 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, Loader2, Upload } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Check } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useToast } from '@/components/ui/toast'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { TagMappingTable } from '@/components/settings/TagMappingTable'
 import { useSettings, useUpdateSetting } from '@/hooks/useSettings'
-import { useRosterAgents, useUploadRoster } from '@/hooks/useRoster'
-import type { SettingValue } from '@/types'
+import { cn } from '@/lib/utils'
+import type { MyShift, SettingValue } from '@/types'
+
+const SHIFT_CODES = ['6A-3P', '11A-8P', '9P-6A']
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+function MyShiftCard() {
+  const { data: settings } = useSettings()
+  const updateSetting = useUpdateSetting()
+  const flash = useSavedFlash()
+
+  const [shiftCode, setShiftCode] = useState<string | null>(null)
+  const [validFrom, setValidFrom] = useState('')
+  const [validTo, setValidTo] = useState('')
+  const [dayOff, setDayOff] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!settings) return
+    const myShift = settings.find((s) => s.key === 'my_shift_json')?.value as MyShift | undefined
+    if (!myShift) return
+    setShiftCode(myShift.shift_code)
+    setValidFrom(myShift.valid_from ?? '')
+    setValidTo(myShift.valid_to ?? '')
+    setDayOff(myShift.day_off)
+  }, [settings])
+
+  const save = (next: Partial<MyShift>) => {
+    const merged: MyShift = {
+      shift_code: shiftCode,
+      valid_from: validFrom || null,
+      valid_to: validTo || null,
+      day_off: dayOff,
+      ...next,
+    }
+    updateSetting.mutate({ key: 'my_shift_json', value: merged as unknown as SettingValue }, { onSuccess: flash.flash })
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>My Shift</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Your own shift, so the Dashboard can remind you before it ends and Analytics can skip your day off when computing streaks.
+        </p>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <Label>Shift</Label>
+          <SavedBadge show={flash.saved} />
+        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-xs text-muted-foreground">Shift timing</Label>
+            <Select
+              value={shiftCode ?? undefined}
+              onValueChange={(v) => {
+                setShiftCode(v)
+                save({ shift_code: v })
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select shift" />
+              </SelectTrigger>
+              <SelectContent>
+                {SHIFT_CODES.map((c) => (
+                  <SelectItem key={c} value={c}>
+                    {c}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="shift-from" className="text-xs text-muted-foreground">
+              Valid from
+            </Label>
+            <Input
+              id="shift-from"
+              type="date"
+              value={validFrom}
+              onChange={(e) => setValidFrom(e.target.value)}
+              onBlur={() => save({ valid_from: validFrom || null })}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="shift-to" className="text-xs text-muted-foreground">
+              Valid to
+            </Label>
+            <Input
+              id="shift-to"
+              type="date"
+              value={validTo}
+              onChange={(e) => setValidTo(e.target.value)}
+              onBlur={() => save({ valid_to: validTo || null })}
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-xs text-muted-foreground">Day off</Label>
+          <div className="inline-flex w-fit items-center rounded-full bg-secondary p-0.75">
+            {WEEKDAYS.map((day) => (
+              <button
+                key={day}
+                onClick={() => {
+                  const next = dayOff === day ? null : day
+                  setDayOff(next)
+                  save({ day_off: next })
+                }}
+                className={cn(
+                  'rounded-full px-3 py-1 text-sm font-medium whitespace-nowrap transition-all duration-150',
+                  dayOff === day ? 'bg-card text-foreground shadow-[0_1px_3px_rgba(0,0,0,0.12)]' : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {day.slice(0, 3)}
+              </button>
+            ))}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
 
 function useSavedFlash() {
   const [saved, setSaved] = useState(false)
@@ -32,13 +151,9 @@ function SavedBadge({ show }: { show: boolean }) {
   )
 }
 
-function RosterCard() {
-  const { data: agents } = useRosterAgents()
+function RosterBucketsCard() {
   const { data: settings } = useSettings()
   const updateSetting = useUpdateSetting()
-  const uploadRoster = useUploadRoster()
-  const toast = useToast()
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [unassignedBucketId, setUnassignedBucketId] = useState('')
   const [assignedBucketId, setAssignedBucketId] = useState('')
@@ -52,44 +167,17 @@ function RosterCard() {
     if (get('roster_bucket_assigned_id')) setAssignedBucketId(String(get('roster_bucket_assigned_id')))
   }, [settings])
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    uploadRoster.mutate(file, {
-      onSuccess: (result) => {
-        toast({
-          title: 'Roster uploaded',
-          description: `${result.agents} agents, ${result.shift_rows} shift rows (${result.date_range[0] ?? '?'} – ${result.date_range[1] ?? '?'})`,
-          variant: 'success',
-        })
-      },
-      onError: (err) => {
-        toast({ title: 'Upload failed', description: err instanceof Error ? err.message : undefined, variant: 'error' })
-      },
-    })
-  }
-
   return (
     <Card>
       <CardHeader>
-        <CardTitle>L2 Roster</CardTitle>
+        <CardTitle>Shift Watch buckets</CardTitle>
         <p className="text-sm text-muted-foreground">
-          Upload the shift-roster CSV to power Shift Watch — tickets held by an L2 agent who's currently off-shift. Tickets come only
-          from the two Trinity buckets below, so L1/Expo tickets never show up here.
+          The two Trinity buckets that define "L2, non-Expo" tickets for Shift Watch. Upload/manage the roster itself from the Shift
+          Watch page.
         </p>
       </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <div className="flex items-center gap-3">
-          <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileChange} />
-          <Button onClick={() => fileInputRef.current?.click()} disabled={uploadRoster.isPending}>
-            {uploadRoster.isPending ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
-            Upload roster CSV
-          </Button>
-          {agents && agents.length > 0 && <span className="text-sm text-muted-foreground">{agents.length} agents loaded</span>}
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 border-t border-border pt-4 sm:grid-cols-2">
+      <CardContent>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between">
               <Label htmlFor="bucket-unassigned">"L2 - Unassigned Tickets" bucket ID</Label>
@@ -117,31 +205,6 @@ function RosterCard() {
             />
           </div>
         </div>
-
-        {agents && agents.length > 0 && (
-          <div className="overflow-hidden rounded-lg border border-border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Agent</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Today</TableHead>
-                  <TableHead>Tomorrow</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {agents.map((a) => (
-                  <TableRow key={a.email}>
-                    <TableCell>{a.name}</TableCell>
-                    <TableCell className="text-muted-foreground">{a.role}</TableCell>
-                    <TableCell className="font-tabular">{a.today_shift_code ?? '—'}</TableCell>
-                    <TableCell className="font-tabular">{a.tomorrow_shift_code ?? '—'}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
       </CardContent>
     </Card>
   )
@@ -278,7 +341,9 @@ export function Settings() {
         </CardContent>
       </Card>
 
-      <RosterCard />
+      <MyShiftCard />
+
+      <RosterBucketsCard />
     </div>
   )
 }
