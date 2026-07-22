@@ -15,6 +15,7 @@ import io
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from typing import Any, Iterable
 
 HEADER_PREFIX = ["agent", "email", "role", "fixed weekly off"]
 
@@ -27,57 +28,86 @@ DATE_COL_RE = re.compile(r"^\s*(\d{1,2})-([A-Za-z]{3})\s*:\s*\w+\s*$")
 SHIFT_CODE_RE = re.compile(r"^\s*(\d{1,2})(A|P)\s*-\s*(\d{1,2})(A|P)\s*$", re.IGNORECASE)
 
 
-def _parse_date_columns(header_cells: list[str], base_year: int) -> list[date | None]:
+def _cell_to_str(value: Any) -> str:
+    """Roster rows may come from a CSV (always str) or an .xlsx sheet, where
+    a cell Excel recognizes as a date renders as an actual datetime/date
+    object, not text - str(value) on that would give an ISO timestamp that
+    never matches our patterns, so dates get special-cased in the callers
+    that need to recognize them (_parse_date_columns); everywhere else a
+    plain string form is enough."""
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d")
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value).strip()
+
+
+def _parse_date_columns(header_cells: list[Any], base_year: int) -> list[date | None]:
     result: list[date | None] = []
     year = base_year
     prev_month: int | None = None
     for cell in header_cells:
-        m = DATE_COL_RE.match(cell)
-        if not m:
-            result.append(None)
+        # Excel auto-detects a header like "28-Jun : Sun" as an actual date
+        # if the user re-saved/edited the sheet - handle that directly
+        # rather than forcing it through the "D-Mon : Day" text regex.
+        if isinstance(cell, datetime):
+            cell_date = cell.date()
+        elif isinstance(cell, date):
+            cell_date = cell
+        else:
+            m = DATE_COL_RE.match(str(cell).strip())
+            if not m:
+                result.append(None)
+                continue
+            month = MONTH_ABBR.get(m.group(2).title())
+            if month is None:
+                result.append(None)
+                continue
+            if prev_month is not None and month < prev_month:
+                year += 1
+            prev_month = month
+            result.append(date(year, month, int(m.group(1))))
             continue
-        month = MONTH_ABBR.get(m.group(2).title())
-        if month is None:
-            result.append(None)
-            continue
-        if prev_month is not None and month < prev_month:
+        if prev_month is not None and cell_date.month < prev_month:
             year += 1
-        prev_month = month
-        result.append(date(year, month, int(m.group(1))))
+        prev_month = cell_date.month
+        result.append(date(year, cell_date.month, cell_date.day))
     return result
 
 
-def parse_roster_csv(text: str, base_year: int) -> tuple[list[dict], list[dict]]:
-    """Returns (agents, shifts): agents is a deduped-by-email list of
-    {email, name, role}; shifts is a list of {agent_email, shift_date,
-    shift_code}. base_year seeds year inference for the "D-Mon : Day"
-    date columns, which carry no year of their own; a month rollback
-    (e.g. Dec -> Jan) within one block's date columns increments the year."""
-    reader = csv.reader(io.StringIO(text))
+def parse_roster_rows(rows: Iterable[list[Any]], base_year: int) -> tuple[list[dict], list[dict]]:
+    """Core parser, shared by the CSV and .xlsx entry points below. Returns
+    (agents, shifts): agents is a deduped-by-email list of {email, name,
+    role}; shifts is a list of {agent_email, shift_date, shift_code}.
+    base_year seeds year inference for the "D-Mon : Day" date columns,
+    which carry no year of their own; a month rollback (e.g. Dec -> Jan)
+    within one block's date columns increments the year."""
     agents: dict[str, dict] = {}
     shifts: list[dict] = []
     date_columns: list[date | None] | None = None
 
-    for row in reader:
+    for raw_row in rows:
+        row = [_cell_to_str(c) for c in raw_row]
         if len(row) < 4:
             date_columns = None
             continue
-        first_four = [c.strip().lower() for c in row[:4]]
+        first_four = [c.lower() for c in row[:4]]
         if first_four == HEADER_PREFIX:
-            date_columns = _parse_date_columns(row[4:], base_year)
+            date_columns = _parse_date_columns(list(raw_row[4:]), base_year)
             continue
         if date_columns is None:
             continue
-        email = row[1].strip().lower() if len(row) > 1 else ""
+        email = row[1].lower() if len(row) > 1 else ""
         if "@" not in email:
             date_columns = None
             continue
-        agents[email] = {"email": email, "name": row[0].strip(), "role": row[2].strip() if len(row) > 2 else ""}
+        agents[email] = {"email": email, "name": row[0], "role": row[2] if len(row) > 2 else ""}
         for i, code in enumerate(row[4:]):
             if i >= len(date_columns):
                 break
             d = date_columns[i]
-            code = code.strip()
             if d is None or not code:
                 continue
             shifts.append({"agent_email": email, "shift_date": d, "shift_code": code})
@@ -85,6 +115,19 @@ def parse_roster_csv(text: str, base_year: int) -> tuple[list[dict], list[dict]]
     # Dedup (agent_email, shift_date) - last write wins if it somehow appears twice.
     deduped: dict[tuple[str, date], dict] = {(s["agent_email"], s["shift_date"]): s for s in shifts}
     return list(agents.values()), list(deduped.values())
+
+
+def parse_roster_csv(text: str, base_year: int) -> tuple[list[dict], list[dict]]:
+    return parse_roster_rows(csv.reader(io.StringIO(text)), base_year)
+
+
+def parse_roster_xlsx(raw: bytes, base_year: int) -> tuple[list[dict], list[dict]]:
+    from openpyxl import load_workbook
+
+    wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    ws = wb.worksheets[0]
+    rows = (list(row) for row in ws.iter_rows(values_only=True))
+    return parse_roster_rows(rows, base_year)
 
 
 @dataclass(frozen=True)

@@ -20,7 +20,7 @@ from app.config import Settings
 from app.db import get_session
 from app.derive import last_assignment_at_for_agent
 from app.models import RosterAgent, RosterShift, Ticket
-from app.roster import classify_tags, compute_shift_status, parse_roster_csv
+from app.roster import classify_tags, compute_shift_status, parse_roster_csv, parse_roster_xlsx
 from app.schemas import RosterAgentOut, RosterOverdueTicket, RosterUploadResult, TicketDetailOut
 from app.sync.manager import SyncManager
 from app.sync.timeutil import to_reporting_datetime, utcnow
@@ -68,6 +68,21 @@ async def _upsert_roster(session: AsyncSession, agents: list[dict], shifts: list
     await session.commit()
 
 
+def _decode_csv_text(raw: bytes) -> str:
+    """Excel's plain "CSV (Comma delimited)" save option writes the file in
+    the system's ANSI codepage (cp1252 on typical Windows setups), not
+    UTF-8, unless the user specifically picks "CSV UTF-8" - so a roster
+    re-saved from Excel is a completely normal case to fall back for, not
+    an error. latin-1 never raises (every byte maps to something), so it's
+    the last-resort catch-all rather than a real "guess"."""
+    for encoding in ("utf-8-sig", "cp1252"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("latin-1")
+
+
 @router.post("/roster/upload", response_model=RosterUploadResult)
 async def upload_roster(
     file: UploadFile,
@@ -75,15 +90,27 @@ async def upload_roster(
     sync_manager: SyncManager = Depends(get_sync_manager),
 ):
     raw = await file.read()
-    try:
-        text = raw.decode("utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise HTTPException(400, "File must be UTF-8 encoded CSV") from exc
-
+    filename = (file.filename or "").lower()
     now = utcnow()
-    agents, shifts = parse_roster_csv(text, base_year=now.year)
+
+    try:
+        if filename.endswith((".xlsx", ".xlsm")):
+            agents, shifts = parse_roster_xlsx(raw, base_year=now.year)
+        elif filename.endswith(".xls"):
+            raise HTTPException(400, "The old .xls format isn't supported - please save as .xlsx or .csv and try again")
+        else:
+            agents, shifts = parse_roster_csv(_decode_csv_text(raw), base_year=now.year)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        # Any parsing failure (corrupt file, unexpected sheet shape, etc.)
+        # should be a clear 400 the user can act on, never a raw 500 - this
+        # endpoint takes arbitrary user-uploaded files, so it must not trust
+        # them to always match the expected shape.
+        raise HTTPException(400, f"Couldn't read that file as a roster: {exc}") from exc
+
     if not agents:
-        raise HTTPException(400, "No agent rows found - check the CSV matches the expected roster format")
+        raise HTTPException(400, "No agent rows found - check the file matches the expected roster format")
 
     await _upsert_roster(session, agents, shifts, now)
 

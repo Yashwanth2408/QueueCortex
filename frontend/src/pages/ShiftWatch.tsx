@@ -132,10 +132,10 @@ function RosterUpload({ compact }: { compact?: boolean }) {
 
   return (
     <div className="flex items-center gap-3">
-      <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileChange} />
+      <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xlsm" className="hidden" onChange={handleFileChange} />
       <Button onClick={() => fileInputRef.current?.click()} disabled={uploadRoster.isPending} size={compact ? 'sm' : 'default'}>
         {uploadRoster.isPending ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
-        {compact ? 'Update roster' : 'Upload roster CSV'}
+        {compact ? 'Update roster' : 'Upload roster (CSV or Excel)'}
       </Button>
     </div>
   )
@@ -175,7 +175,7 @@ export function ShiftWatch() {
             <div>
               <p className="text-base font-semibold">Add your team's roster to get started</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Upload the shift-roster CSV (agent, role, and per-day shift codes) to see who's holding tickets while off-shift.
+                Upload the shift-roster file (CSV or Excel — agent, role, and per-day shift codes) to see who's holding tickets while off-shift.
               </p>
             </div>
             <RosterUpload />
