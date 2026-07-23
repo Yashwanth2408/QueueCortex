@@ -80,7 +80,8 @@ class SyncManager:
             return
         async with self._lock:
             async with SessionLocal() as session:
+                run_id = await create_pending_run(session, "roster")
                 try:
-                    await run_roster_sync(self._client, session, self._settings)
+                    await run_roster_sync(self._client, session, self._settings, run_id)
                 except Exception:  # noqa: BLE001
                     logger.exception("roster sync failed")

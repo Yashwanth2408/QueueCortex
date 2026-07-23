@@ -6,7 +6,9 @@ export function useSyncStatus() {
   return useQuery({
     queryKey: ['sync-status'],
     queryFn: () => request<SyncStatus>('/sync/status'),
-    refetchInterval: 30_000,
+    // Poll much faster while something's actually running so a live
+    // percentage feels live - 30s the rest of the time is plenty.
+    refetchInterval: (query) => (query.state.data?.is_running ? 2_000 : 30_000),
   })
 }
 

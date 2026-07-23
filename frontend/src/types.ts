@@ -157,6 +157,7 @@ export interface SyncStatus {
   last_incremental_sync_error: string | null
   next_poll_at: string | null
   is_running: boolean
+  current_run: SyncRun | null
 }
 
 export interface SyncRun {
@@ -169,6 +170,7 @@ export interface SyncRun {
   tickets_updated: number
   events_ingested: number
   error_summary: string | null
+  total_estimate: number | null
 }
 
 export interface TagOut {

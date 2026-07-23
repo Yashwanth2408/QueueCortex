@@ -70,6 +70,17 @@ export function TopBar() {
   const lastSync = status?.last_incremental_sync_at ?? status?.last_full_backfill_at ?? null
   const initial = (email ?? '?').charAt(0).toUpperCase()
 
+  const currentRun = status?.current_run
+  // Capped below 100 while still 'running' - total_estimate is a rough
+  // denominator (see SyncRun.total_estimate), so it can occasionally end up
+  // a little short of what actually gets checked; only the final status
+  // flip should ever claim "done".
+  const progressPercent =
+    currentRun?.total_estimate && currentRun.total_estimate > 0
+      ? Math.min(99, Math.round((currentRun.tickets_checked / currentRun.total_estimate) * 100))
+      : null
+  const syncingLabel = progressPercent !== null ? `syncing… ${progressPercent}%` : 'syncing…'
+
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background/72 backdrop-blur-xl backdrop-saturate-150">
       <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3">
@@ -82,9 +93,19 @@ export function TopBar() {
         </div>
         <SegmentedNav />
         <div className="ml-auto flex items-center gap-3">
-          <span className="hidden min-w-26 text-right text-xs text-muted-foreground sm:inline">
-            {isRunning ? 'syncing…' : lastSync ? `synced ${relativeTime(lastSync)}` : 'not synced yet'}
-          </span>
+          <div className="hidden items-center gap-2 sm:flex">
+            <span className="min-w-26 text-right text-xs text-muted-foreground">
+              {isRunning ? syncingLabel : lastSync ? `synced ${relativeTime(lastSync)}` : 'not synced yet'}
+            </span>
+            {isRunning && progressPercent !== null && (
+              <div className="h-1 w-14 overflow-hidden rounded-full bg-secondary">
+                <div
+                  className="h-full rounded-full bg-foreground transition-[width] duration-300 ease-out"
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+            )}
+          </div>
           <Button
             variant="outline"
             size="sm"

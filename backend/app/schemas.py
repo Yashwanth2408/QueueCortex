@@ -195,6 +195,7 @@ class SyncRunOut(BaseModel):
     tickets_updated: int
     events_ingested: int
     error_summary: str | None
+    total_estimate: int | None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -206,6 +207,11 @@ class SyncStatusOut(BaseModel):
     last_incremental_sync_error: str | None
     next_poll_at: datetime | None
     is_running: bool
+    # Whichever sync (personal or Shift Watch's roster sync - they share one
+    # lock, so at most one of these is ever running) is currently in
+    # progress, so the UI can show live percent-complete without having to
+    # be the tab that triggered it.
+    current_run: SyncRunOut | None = None
 
 
 class TagOut(BaseModel):

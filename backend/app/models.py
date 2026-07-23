@@ -292,7 +292,7 @@ class SyncRun(Base):
     __tablename__ = "sync_runs"
     __table_args__ = (
         CheckConstraint(
-            "run_type IN ('manual','scheduled','add_ticket','backfill')", name="ck_sync_run_type"
+            "run_type IN ('manual','scheduled','add_ticket','backfill','roster')", name="ck_sync_run_type"
         ),
         CheckConstraint(
             "status IN ('running','success','partial_failure','error')", name="ck_sync_run_status"
@@ -308,6 +308,12 @@ class SyncRun(Base):
     tickets_updated: Mapped[int] = mapped_column(Integer, default=0)
     events_ingested: Mapped[int] = mapped_column(Integer, default=0)
     error_summary: Mapped[str | None] = mapped_column(Text)
+    # Rough denominator for a live progress percentage while a run is still
+    # 'running' (tickets_checked / total_estimate) - an estimate, not a hard
+    # count, since Trinity's list_tickets never reports a total; see the
+    # call sites in sync/engine.py and sync/roster_sync.py for how each run
+    # type derives it. Null means "unknown", so the UI shows no percentage.
+    total_estimate: Mapped[int | None] = mapped_column(Integer)
 
 
 class Setting(Base):

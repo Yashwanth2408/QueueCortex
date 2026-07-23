@@ -10,7 +10,7 @@ import json
 import re
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
@@ -629,6 +629,16 @@ async def run_full_backfill(client: TrinityClient, session: AsyncSession, settin
     now = utcnow()
     run = await session.get(SyncRun, run_id)
 
+    # Trinity's list_tickets never reports a total, so the only cheap way to
+    # get a real denominator for a live percentage is ticket_counts, which
+    # covers every status (a full backfill has no status filter either).
+    try:
+        counts = await client.ticket_counts(assigned_to=settings.tracked_agent_email)
+        run.total_estimate = sum(v for v in counts.values() if isinstance(v, int))
+    except Exception:  # noqa: BLE001
+        run.total_estimate = None
+    await session.commit()
+
     checked = updated = events = 0
     try:
         cursor = None
@@ -642,12 +652,17 @@ async def run_full_backfill(client: TrinityClient, session: AsyncSession, settin
                 checked += 1
                 updated += 1
                 events += ingested
-                await session.flush()
+                run.tickets_checked = checked
+                run.tickets_updated = updated
+                run.events_ingested = events
+                await session.commit()
             cursor = page.get("next_cursor")
             if not cursor:
                 break
         run.status = "success"
     except Exception as exc:  # noqa: BLE001
+        await session.rollback()
+        run = await session.get(SyncRun, run_id)
         run.status = "error"
         run.error_summary = str(exc)
 
@@ -668,6 +683,16 @@ async def run_full_backfill(client: TrinityClient, session: AsyncSession, settin
 async def run_incremental_sync(client: TrinityClient, session: AsyncSession, settings: Settings, run_id: int) -> SyncRun:
     now = utcnow()
     run = await session.get(SyncRun, run_id)
+
+    # Rough denominator for a live percentage: the supplemental pass below
+    # (usually the slower half, since it re-checks every tracked ticket by
+    # id) scales with exactly this count, and phase one's checked/updated
+    # tally converges toward it too by the time the whole run finishes -
+    # good enough for "roughly how far along", not an exact count.
+    run.total_estimate = (
+        await session.execute(select(func.count()).select_from(Ticket).where(Ticket.is_tracked.is_(True)))
+    ).scalar_one() or None
+    await session.commit()
 
     checked = updated = events = 0
     touched_ids: set[str] = set()
@@ -699,7 +724,10 @@ async def run_incremental_sync(client: TrinityClient, session: AsyncSession, set
                     await recompute_derived_type(session, ticket)
                 updated += 1
                 events += ingested
-                await session.flush()
+                run.tickets_checked = checked
+                run.tickets_updated = updated
+                run.events_ingested = events
+                await session.commit()
             cursor = page.get("next_cursor")
             if not cursor:
                 break
@@ -719,10 +747,19 @@ async def run_incremental_sync(client: TrinityClient, session: AsyncSession, set
             if ingested:
                 updated += 1
             events += ingested
-            await session.flush()
+            run.tickets_checked = checked
+            run.tickets_updated = updated
+            run.events_ingested = events
+            await session.commit()
 
         run.status = "success"
     except Exception as exc:  # noqa: BLE001
+        # A failed commit above leaves the session unusable until rolled
+        # back, which also expires `run` - re-fetch it before touching it
+        # again (the local checked/updated/events counters are plain ints,
+        # unaffected by the rollback).
+        await session.rollback()
+        run = await session.get(SyncRun, run_id)
         run.status = "error"
         run.error_summary = str(exc)
 

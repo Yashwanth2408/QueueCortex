@@ -35,6 +35,11 @@ async def get_sync_status(
     session: AsyncSession = Depends(get_session), manager: SyncManager = Depends(get_sync_manager)
 ):
     state = await session.get(SyncState, "primary")
+    current_run = None
+    if manager.is_running:
+        current_run = (
+            await session.execute(select(SyncRun).where(SyncRun.status == "running").order_by(SyncRun.id.desc()).limit(1))
+        ).scalar_one_or_none()
     return SyncStatusOut(
         last_full_backfill_at=state.last_full_backfill_at if state else None,
         last_incremental_sync_at=state.last_incremental_sync_at if state else None,
@@ -42,4 +47,5 @@ async def get_sync_status(
         last_incremental_sync_error=state.last_incremental_sync_error if state else None,
         next_poll_at=state.next_poll_at if state else None,
         is_running=manager.is_running,
+        current_run=current_run,
     )
