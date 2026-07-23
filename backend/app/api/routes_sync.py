@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_sync_manager
@@ -35,11 +34,13 @@ async def get_sync_status(
     session: AsyncSession = Depends(get_session), manager: SyncManager = Depends(get_sync_manager)
 ):
     state = await session.get(SyncState, "primary")
-    current_run = None
-    if manager.is_running:
-        current_run = (
-            await session.execute(select(SyncRun).where(SyncRun.status == "running").order_by(SyncRun.id.desc()).limit(1))
-        ).scalar_one_or_none()
+    # active_run_id (not "most recent status='running' row") - a manual
+    # "Sync now" queued behind an already-running sync creates its row
+    # immediately too, so the newest 'running' row isn't necessarily the
+    # one actually executing; stale rows from a killed process can also
+    # linger as 'running' forever. active_run_id is only ever set to the
+    # run genuinely holding the lock right now.
+    current_run = await session.get(SyncRun, manager.active_run_id) if manager.active_run_id is not None else None
     return SyncStatusOut(
         last_full_backfill_at=state.last_full_backfill_at if state else None,
         last_incremental_sync_at=state.last_incremental_sync_at if state else None,

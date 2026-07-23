@@ -207,7 +207,16 @@ async def update_roster_agent_shift(
 async def roster_overdue_tickets(
     session: AsyncSession = Depends(get_session), settings: Settings = Depends(get_app_settings)
 ):
-    roster_agents = {a.email: a for a in (await session.execute(select(RosterAgent))).scalars().all()}
+    # Exclude the tracked agent themself - the roster CSV lists every L2
+    # teammate including Yashwanth (he's an L2 agent too), but Shift Watch
+    # exists to surface OTHER agents' off-shift tickets so Yashwanth can
+    # step in; his own assigned tickets already live on his Dashboard, and
+    # "step in on a ticket you're already assigned" makes no sense.
+    roster_agents = {
+        a.email: a
+        for a in (await session.execute(select(RosterAgent))).scalars().all()
+        if a.email != settings.tracked_agent_email.lower()
+    }
     if not roster_agents:
         return []
 
